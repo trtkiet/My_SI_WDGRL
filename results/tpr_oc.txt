@@ -1,0 +1,12 @@
+delta: 1
+tpr:0.0
+reject: 0, detect: 15
+delta: 2
+tpr:0.0625
+reject: 2, detect: 32
+delta: 3
+tpr:0.04054054054054054
+reject: 3, detect: 74
+delta: 4
+tpr:0.09803921568627451
+reject: 10, detect: 102
