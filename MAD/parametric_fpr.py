@@ -4,31 +4,28 @@ from multiprocessing import Pool
 import os
 from model import WDGRL
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import kstest
 
-def run_tpr(self):
-    _, delta, Model = self
-    Model.generator = Model.generator.cuda()
-    ns, nt, d = 150, 25, 1
+def run_fpr(self):
+    # np.random.seed(52907)
+    _, Model = self
+    # Create a new instance of the WDGRL model (same architecture as before)
+    ns, nt, d = 150, 100, 1
     mu_s, mu_t = 0, 2
-    delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
+    delta_s, delta_t = [0, 1, 2, 3, 4], [0]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
-    
-    # print(f'iteration: {_} delta: {delta} ')
+    Model.generator = Model.generator.cuda()
 
     xs = torch.FloatTensor(xs)
     ys = torch.LongTensor(ys)
     xt = torch.FloatTensor(xt)
     yt = torch.LongTensor(yt)
 
-    xs = xs.cuda()
-    xt = xt.cuda()
-    ys = ys.cuda()
-    yt = yt.cuda()
-
-    xs_hat = Model.extract_feature(xs)
-    xt_hat = Model.extract_feature(xt)
+    xs_hat = Model.extract_feature(xs.cuda())
+    xt_hat = Model.extract_feature(xt.cuda())
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
     xs_hat = xs_hat.cpu()
@@ -38,18 +35,12 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-
-    # print(xs_hat)
-    # print(xt_hat)
-    O = max_sum(x_hat.numpy())
-    
-    if (O < ns):
+    alpha = 1.5
+    O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
+    # print(O)
+    if (len(O) == 0) or (len(O) == nt):
         return None
-    else:
-        O = [O - ns]   
-    if yt[O[0]] == 0:
-        return None
-    yt_hat = np.zeros((nt, 1))
+    yt_hat = torch.zeros_like(yt)
     yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
     X = np.vstack((xs, xt))
@@ -63,7 +54,7 @@ def run_tpr(self):
 
     etajTx = etaj.T.dot(X)
     
-    # print(f'Anomaly index: {O[0] + ns}')
+    # print(f'Anomaly indexes: {O}')
     # print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
@@ -72,8 +63,8 @@ def run_tpr(self):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     threshold = 20
-    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns)
-    CDF = cdf(etajTmu[0][0], etajTsigmaetaj[0][0], list_zk, list_Oz, etajTx[0][0], [O[0] + ns])
+    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
+    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
     return p_value
@@ -83,12 +74,9 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
-    alpha = 0.05
-    list_tpr = []
     d = 1
-    generator_hidden_dims = [10, 10, 10, 10, 10]
-    critic_hidden_dims = [4, 4, 2, 1]
+    generator_hidden_dims = [4, 4, 2]
+    critic_hidden_dims = [4, 2, 1]
     Model = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
     index = None
     with open("model/models.txt", "r") as f:
@@ -105,29 +93,29 @@ if __name__ == '__main__':
     Model.generator.load_state_dict(check_point['generator_state_dict'])
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
-    list_model = [Model for _ in range(max_iter)] 
-    with open('results/tpr_parametric.txt', 'w') as f:
-        f.write('')
-    for delta in range(1, 5):
-        reject = 0
-        detect = 0
-        list_p_value = []
-        pool = Pool(initializer=np.random.seed)
-        list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
-        pool.close()
-        pool.join()
 
-        for p_value in list_result:
-            if p_value is not None:
-                detect += 1
-                list_p_value.append(p_value)
+    max_iter = 1000
+    alpha = 0.05
+    list_model = [Model for i in range(max_iter)]
+    reject = 0
+    detect = 0
+    list_p_value = []
+    pool = Pool(initializer=np.random.seed)
+    list_result = pool.map(run_fpr, zip(range(max_iter), list_model))
+    pool.close()
+    pool.join()
 
-                if (p_value < alpha):
-                    reject += 1
-        with open("results/tpr_parametric.txt", "a") as f:
-            f.write('delta: ' + str(delta) + '\n')
-            f.write('tpr:' + str(reject/detect) + '\n')
-            f.write(f'reject: {reject}, detect: {detect}\n')
-        print(f'delta: {delta}, TPR: {reject/detect}')
-    
+    for p_value in list_result:
+        if p_value is not None:
+            detect += 1
+            list_p_value.append(p_value)
+
+            if (p_value < alpha):
+                reject += 1
+    with open(f"results/fpr_parametric.txt", "w") as f:
+        f.write(str(reject/detect) + '\n')
+        f.write(str(kstest(list_p_value, 'uniform')) + '\n')
+    plt.hist(list_p_value)
+    plt.savefig(f'results/fpr_parametric.png')
+    plt.close()
 

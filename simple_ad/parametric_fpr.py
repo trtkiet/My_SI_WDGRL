@@ -5,8 +5,10 @@ import os
 from model import WDGRL
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import kstest
 
 def run_fpr(self):
+    # np.random.seed(52907)
     _, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 1
@@ -34,9 +36,8 @@ def run_fpr(self):
     ys = ys.cpu()
     yt = yt.cpu()
     O = max_sum(x_hat.numpy())
-    print(O)
     if (O < ns):
-        return None
+        return run_fpr(self)
     else:
         O = [O - ns]   
     yt_hat = np.zeros((nt, 1))
@@ -63,7 +64,7 @@ def run_fpr(self):
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     threshold = 20
     list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns)
-    CDF = cdf(etajTmu[0][0], etajTsigmaetaj[0][0], list_zk, list_Oz, etajTx[0][0], [O[0] + ns])
+    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], [O[0] + ns])
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
     return p_value
@@ -93,7 +94,7 @@ if __name__ == '__main__':
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
 
-    max_iter = 2000
+    max_iter = 1000
     alpha = 0.05
     list_model = [Model for i in range(max_iter)]
     reject = 0
@@ -113,6 +114,7 @@ if __name__ == '__main__':
                 reject += 1
     with open(f"results/fpr_parametric.txt", "w") as f:
         f.write(str(reject/detect) + '\n')
+        f.write(str(kstest(list_p_value, 'uniform')) + '\n')
     plt.hist(list_p_value)
     plt.savefig(f'results/fpr_parametric.png')
     plt.close()

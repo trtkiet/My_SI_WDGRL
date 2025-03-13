@@ -6,6 +6,7 @@ from model import WDGRL
 import numpy as np
 
 def run_tpr(self):
+    np.random.seed(52907)
     _, delta, Model = self
     Model.generator = Model.generator.cuda()
     ns, nt, d = 150, 25, 1
@@ -33,11 +34,11 @@ def run_tpr(self):
     
     O = max_sum(x_hat.numpy())
     if (O < ns):
-        return None
+        return run_tpr(self)
     else:
         O = [O - ns]   
     if yt[O[0]] == 0:
-        return None
+        return run_tpr(self)
     yt_hat = torch.zeros_like(yt)
     yt_hat[O[0]] = 1
     Oc = list(np.where(yt_hat == 0)[0])
@@ -87,7 +88,7 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
+    max_iter = 1
     alpha = 0.05
     list_tpr = []
     d = 1
