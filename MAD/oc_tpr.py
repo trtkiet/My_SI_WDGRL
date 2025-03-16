@@ -6,14 +6,15 @@ from model import WDGRL
 import numpy as np
 
 def run_tpr(self):
-    np.random.seed(52907)
     _, delta, Model = self
-    Model.generator = Model.generator.cuda()
-    ns, nt, d = 150, 25, 1
+    # Create a new instance of the WDGRL model (same architecture as before)
+    ns, nt, d = 150, 75, 1
     mu_s, mu_t = 0, 2
     delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
+
+    Model.generator = Model.generator.cuda()
 
     xs = torch.FloatTensor(xs)
     ys = torch.LongTensor(ys)
@@ -31,18 +32,23 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-    
-    O = max_sum(x_hat.numpy())
-    if (O < ns):
-        return run_tpr(self)
-    else:
-        O = [O - ns]   
-    if yt[O[0]] == 0:
-        return run_tpr(self)
+    alpha = 2.5
+    O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
+    # print(len(O))
+    if (len(O) == 0) or (len(O) == nt):
+        return None
     yt_hat = torch.zeros_like(yt)
-    yt_hat[O[0]] = 1
+    yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
-    j = np.random.choice(O, 1, replace=False)[0]
+    X = np.vstack((xs, xt))
+    X = torch.FloatTensor(X)
+    true_O = []
+    for i in O:
+        if yt[i] == 1:
+            true_O.append(i)
+    if len(true_O) == 0:
+        return None
+    j = np.random.choice(true_O)
     etj = np.zeros((nt, 1))
     etj[j][0] = 1
     etOc = np.zeros((nt, 1))
@@ -59,25 +65,8 @@ def run_tpr(self):
     
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
-    
-
-    itv = [np.NINF, np.inf]
-    for i in range(X.shape[0]):
-        itv = intersect(itv, get_interval(X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1), Model)[0])
-
-    sub_itv = [np.NINF, np.inf]
-    _, uo, vo = get_interval(X[O[0]+ns].reshape(-1, 1), a[O[0]+ns].reshape(-1, 1), b[O[0]+ns].reshape(-1, 1), Model)
-    I = np.ones((x_hat.shape[1],1))
-    for i in range(X.shape[0]):
-        if (i != O[0]+ns):
-            _, ui, vi = get_interval(X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1), Model)
-            u = uo - ui
-            v = vo - vi 
-            u = I.T.dot(u)[0][0]
-            v = I.T.dot(v)[0][0]
-            sub_itv = intersect(sub_itv, solve_linear_inequality(-u, -v))
-    itv = intersect(itv, sub_itv)
-    # print(f'itv: {itv}')
+    itv = get_ad_interval(X, x_hat, ns, nt, O, a, b, Model, alpha)
+    # print(itv)
     cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
     p_value = float(2 * min(cdf, 1 - cdf))
     print(f'p_value: {p_value}')
@@ -88,12 +77,12 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 1
+    max_iter = 120
     alpha = 0.05
     list_tpr = []
     d = 1
-    generator_hidden_dims = [10, 10, 10, 10, 10]
-    critic_hidden_dims = [4, 4, 2, 1]
+    generator_hidden_dims = [4, 4, 2]
+    critic_hidden_dims = [4, 2, 1]
     Model = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
     index = None
     with open("model/models.txt", "r") as f:

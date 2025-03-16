@@ -11,7 +11,7 @@ def run_fpr(self):
     # np.random.seed(52907)
     _, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
-    ns, nt, d = 150, 100, 1
+    ns, nt, d = 150, 25, 1
     mu_s, mu_t = 0, 2
     delta_s, delta_t = [0, 1, 2, 3, 4], [0]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
@@ -55,7 +55,7 @@ def run_fpr(self):
     etajTx = etaj.T.dot(X)
     
     # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
+    print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
     etajTmu = etaj.T.dot(mu)
@@ -67,6 +67,7 @@ def run_fpr(self):
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
+    # print('--------------------------')
     return p_value
 
 if __name__ == '__main__':
@@ -100,7 +101,7 @@ if __name__ == '__main__':
     reject = 0
     detect = 0
     list_p_value = []
-    pool = Pool(initializer=np.random.seed)
+    pool = Pool(initializer=np.random.seed, processes=7)
     list_result = pool.map(run_fpr, zip(range(max_iter), list_model))
     pool.close()
     pool.join()

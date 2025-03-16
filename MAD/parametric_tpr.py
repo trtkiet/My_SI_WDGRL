@@ -6,30 +6,23 @@ from model import WDGRL
 import numpy as np
 
 def run_tpr(self):
-    np.random.seed(42)
     _, delta, Model = self
-    Model.generator = Model.generator.cuda()
-    ns, nt, d = 150, 25, 1
+    # Create a new instance of the WDGRL model (same architecture as before)
+    ns, nt, d = 150, 75, 1
     mu_s, mu_t = 0, 2
     delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
-    
-    # print(f'iteration: {_} delta: {delta} ')
+    Model.generator = Model.generator.cuda()
 
     xs = torch.FloatTensor(xs)
     ys = torch.LongTensor(ys)
     xt = torch.FloatTensor(xt)
     yt = torch.LongTensor(yt)
 
-    xs = xs.cuda()
-    xt = xt.cuda()
-    ys = ys.cuda()
-    yt = yt.cuda()
-
-    xs_hat = Model.extract_feature(xs)
-    xt_hat = Model.extract_feature(xt)
+    xs_hat = Model.extract_feature(xs.cuda())
+    xt_hat = Model.extract_feature(xt.cuda())
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
     xs_hat = xs_hat.cpu()
@@ -39,23 +32,25 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-
-    # print(xs_hat)
-    # print(xt_hat)
-    O = max_sum(x_hat.numpy())
-    
-    if (O < ns):
+    alpha = 2.5
+    O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
+    # print(len(O))
+    if (len(O) == 0) or (len(O) == nt):
         return None
-    else:
-        O = [O - ns]   
-    if yt[O[0]] == 0:
-        return None
-    yt_hat = np.zeros((nt, 1))
+    yt_hat = torch.zeros_like(yt)
     yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
     X = np.vstack((xs, xt))
     X = torch.FloatTensor(X)
-    j = np.random.choice(O)
+    true_O = []
+    for i in O:
+        if yt[i] == 1:
+            true_O.append(i)
+    if len(true_O) == 0:
+        return None
+    # print(f'len true_O: {len(true_O)}')
+    # print(f'len Oc: {len(Oc)}')
+    j = np.random.choice(true_O)
     etj = np.zeros((nt, 1))
     etj[j][0] = 1
     etOc = np.zeros((nt, 1))
@@ -64,8 +59,8 @@ def run_tpr(self):
 
     etajTx = etaj.T.dot(X)
     
-    print(f'Anomaly index: {O[0] + ns}')
-    print(f'etajTX: {etajTx}')
+    # print(f'Anomaly indexes: {O}')
+    # print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
     etajTmu = etaj.T.dot(mu)
@@ -73,10 +68,11 @@ def run_tpr(self):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     threshold = 20
-    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns)
-    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], [O[0] + ns])
+    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha, O)
+    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
+    # print('--------------------------')
     return p_value
 
 if __name__ == '__main__':
@@ -84,12 +80,12 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 1
+    max_iter = 120
     alpha = 0.05
     list_tpr = []
     d = 1
-    generator_hidden_dims = [10, 10, 10, 10, 10]
-    critic_hidden_dims = [4, 4, 2, 1]
+    generator_hidden_dims = [4, 4, 2]
+    critic_hidden_dims = [4, 2, 1]
     Model = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
     index = None
     with open("model/models.txt", "r") as f:
@@ -109,7 +105,7 @@ if __name__ == '__main__':
     list_model = [Model for _ in range(max_iter)] 
     with open('results/tpr_parametric.txt', 'w') as f:
         f.write('')
-    for delta in range(4, 5):
+    for delta in reversed(range(1, 5)):
         reject = 0
         detect = 0
         list_p_value = []

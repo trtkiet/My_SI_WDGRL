@@ -41,9 +41,8 @@ def intersect(itv1, itv2):
 def solve_linear_inequality(u, v): #u + vz < 0
     u = float(u)
     v = float(v)
-    # print(u, v)
     if (v > -1e-16 and v < 1e-16):
-        if (u <= 0):
+        if (u <= 1e-7):
             return [-np.Inf, np.Inf]
         else:
             print('error', u, v)
@@ -121,46 +120,62 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     u = np.zeros((X.shape[0], X_hat.shape[1]))
     v = np.zeros((X.shape[0], X_hat.shape[1]))
     # print(u.shape, v.shape)
+    O = []
     for i in range(X_hat.shape[0]):
         sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1), model)
         itv = intersect(itv, sub_itv)
     # print(u, v)
+    # print(itv)
+    sub_itv = [np.NINF, np.inf]
     for d in range(X_hat.shape[1]):
         k1 = median(X_hat[:, d])
         for i in range(X_hat.shape[0]):
             if X_hat[i, d] <= X_hat[k1, d]:
-                itv = intersect(itv, solve_linear_inequality(u[i, d] - u[k1, d], v[i, d] - v[k1, d]))
+                sub_itv = intersect(sub_itv, solve_linear_inequality(u[i, d] - u[k1, d], v[i, d] - v[k1, d]))
             else:
-                itv = intersect(itv, solve_linear_inequality(u[k1, d] - u[i, d], v[k1, d] - v[i, d]))
+                sub_itv = intersect(sub_itv, solve_linear_inequality(u[k1, d] - u[i, d], v[k1, d] - v[i, d]))
+
         dev = np.abs(X_hat[:, d] - X_hat[k1, d])
         k2 = median(dev)
         sk2 = np.sign(X_hat[k2, d] - X_hat[k1, d])
         for j in range(X_hat.shape[0]):
             if abs(X_hat[j, d] - X_hat[k1, d]) <= abs(X_hat[k2, d] - X_hat[k1, d]):
                 sj = np.sign(X_hat[j, d] - X_hat[k1, d])
-                itv = intersect(itv, solve_linear_inequality(
+                sub_itv = intersect(sub_itv, solve_linear_inequality(
                     sj * (u[j, d] - u[k1, d]) - sk2 * (u[k2, d] - u[k1, d]), 
                     sj * (v[j, d] - v[k1, d]) - sk2 * (v[k2, d] - v[k1, d])))
             else:
                 sj = np.sign(X_hat[j, d] - X_hat[k1, d])
-                itv = intersect(itv, solve_linear_inequality(
+                sub_itv = intersect(sub_itv, solve_linear_inequality(
                     -sj * (u[j, d] - u[k1, d]) + sk2 * (u[k2, d] - u[k1, d]), 
                     -sj * (v[j, d] - v[k1, d]) + sk2 * (v[k2, d] - v[k1, d])))
-                
+
         upper = X_hat[k1, d] + alpha * dev[k2]
         lower = X_hat[k1, d] - alpha * dev[k2]
         for j in range(ns, X.shape[0]):
             if (X_hat[j, d] < lower):
-                itv = intersect(itv, solve_linear_inequality(
+                sub_itv = intersect(sub_itv, solve_linear_inequality(
                     u[j, d] - u[k1, d] + alpha * sk2 * (u[k2, d] - u[k1, d]),
                     v[j, d] - v[k1, d] + alpha * sk2 * (v[k2, d] - v[k1, d])
                 ))
-            elif (X_hat[j, d] > upper):
-                itv = intersect(itv, solve_linear_inequality(
+            else:
+                sub_itv = intersect(sub_itv, solve_linear_inequality(
+                    -(u[j, d] - u[k1, d] + alpha * sk2 * (u[k2, d] - u[k1, d])),
+                    -(v[j, d] - v[k1, d] + alpha * sk2 * (v[k2, d] - v[k1, d]))
+                ))
+            if (X_hat[j, d] > upper):
+                sub_itv = intersect(sub_itv, solve_linear_inequality(
                     -(u[j, d] - u[k1, d] - alpha * sk2 * (u[k2, d] - u[k1, d])),
                     -(v[j, d] - v[k1, d] - alpha * sk2 * (v[k2, d] - v[k1, d]))
                 ))
-
+            else:
+                sub_itv = intersect(sub_itv, solve_linear_inequality(
+                    (u[j, d] - u[k1, d] - alpha * sk2 * (u[k2, d] - u[k1, d])),
+                    (v[j, d] - v[k1, d] - alpha * sk2 * (v[k2, d] - v[k1, d]))
+                ))
+    # print(f'mad itv: {sub_itv}')
+    # print(f'dnn itv: {itv}')
+    itv = intersect(itv, sub_itv)
     return itv
 
 def compute_yz(X, etaj, zk, n):
@@ -185,10 +200,12 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
     Xzt_hat = Xz_hat[ns:]
     Oz = MAD_AD(Xzs_hat, Xzt_hat, alpha)
     itv = get_ad_interval(Xz, Xz_hat, ns, nt, Oz, a, b, model, alpha)
+    if (itv[0] > zk):
+        print(f'error{itv[0] - zk}')
     return itv[1] - min(zk, itv[1]), Oz
 
 
-def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
+def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha, O):
     zk = -threshold
 
     list_zk = [zk]
@@ -199,10 +216,7 @@ def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
         skz, Oz = parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
-        if zk < threshold:
-            list_zk.append(zk)
-        else:
-            list_zk.append(threshold)
+        list_zk.append(zk)
         list_Oz.append(Oz)
         # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
         # print(f'Anomaly index: {Oz}')
@@ -212,6 +226,7 @@ def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
 def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
     numerator = 0
     denominator = 0
+    cnt = 0
     for each_interval in range(len(list_zk) - 1):
         al = list_zk[each_interval]
         ar = list_zk[each_interval + 1] - 1e-3
@@ -220,7 +235,8 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
         # print(f'list_Oz: {list_Oz[each_interval]}')
         if (np.array_equal(O, list_Oz[each_interval]) == False):
             continue
-
+        # print(f'interval: {al} - {ar}')
+        cnt += 1
         denominator = denominator + mp.ncdf((ar - mu)/sigma) - mp.ncdf((al - mu)/sigma)
         if etajTX >= ar:
             numerator = numerator + mp.ncdf((ar - mu)/sigma) - mp.ncdf((al - mu)/sigma)
@@ -228,57 +244,18 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
             numerator = numerator + mp.ncdf((etajTX - mu)/sigma) - mp.ncdf((al - mu)/sigma)
     # print(f'numerator: {numerator}')
     # print(f'denominator: {denominator}')
+    # print('cnt: ', cnt)
+        # if numerator == 0:
+        #     print('con loi ne')
+        #     print(f'etajTx: {etajTX}')
+        #     for each_interval in range(len(list_zk) - 1):
+        #         al = list_zk[each_interval]
+        #         ar = list_zk[each_interval + 1] - 1e-3
+        #         print(f'interval: {al} - {ar}')
     if denominator != 0:
         return float(numerator/denominator)
     else:
         return None
-
-def get_interval(Xtj, a, b, model):
-    layers = []
-
-    for name, param in model.generator.named_children():
-        temp = dict(param._modules)
-        
-        for layer_name in temp.values():
-            if ('Linear' in str(layer_name)):
-                layers.append('Linear')
-            elif ('ReLU' in str(layer_name)):
-                layers.append('ReLU')
-
-    ptr = 0
-    itv = [np.NINF, np.Inf]
-    u = a
-    v = b
-    temp = Xtj
-    weight = None
-    bias = None
-    for name, param in model.generator.named_parameters():
-        if (layers[ptr] == 'Linear'):
-            if ('weight' in name):
-                weight = param.data.cpu().detach().numpy()
-            elif ('bias' in name):
-                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
-                ptr += 1
-                temp = weight.dot(temp) + bias
-                u = weight.dot(u) + bias
-                v = weight.dot(v)
-
-        if (ptr < len(layers) and layers[ptr] == 'ReLU'):
-            ptr += 1
-            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
-            sub_itv = [np.NINF, np.inf]
-            for i in range(temp.shape[0]):
-                if temp[i] > 0:
-                    Relu_matrix[i][i] = 1
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(-u[i][0], -v[i][0]))
-                else:
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(u[i][0], v[i][0]))
-            itv = intersect(itv, sub_itv)
-            temp = Relu_matrix.dot(temp)
-            u = Relu_matrix.dot(u)
-            v = Relu_matrix.dot(v)
-
-    return itv, u, v
 
 def truncated_cdf(etajTy, mu, sigma, left, right):
     numerator = mp.ncdf((etajTy - mu) / sigma) - mp.ncdf((left - mu) / sigma)

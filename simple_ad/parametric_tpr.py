@@ -6,7 +6,7 @@ from model import WDGRL
 import numpy as np
 
 def run_tpr(self):
-    np.random.seed(42)
+    # np.random.seed(42)
     _, delta, Model = self
     Model.generator = Model.generator.cuda()
     ns, nt, d = 150, 25, 1
@@ -84,7 +84,7 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 1
+    max_iter = 120
     alpha = 0.05
     list_tpr = []
     d = 1
@@ -113,7 +113,7 @@ if __name__ == '__main__':
         reject = 0
         detect = 0
         list_p_value = []
-        pool = Pool(initializer=np.random.seed)
+        pool = Pool(initializer=np.random.seed, processes=1)
         list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
         pool.close()
         pool.join()

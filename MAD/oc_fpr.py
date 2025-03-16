@@ -61,7 +61,7 @@ def run_fpr(self):
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     j = j + ns
     itv = get_ad_interval(X, x_hat, ns, nt, O, a, b, Model, alpha)
-    # print(itv)
+    print(itv)
     cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
     p_value = float(2 * min(cdf, 1 - cdf))
     print(f'p_value: {p_value}')
@@ -92,7 +92,7 @@ if __name__ == '__main__':
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
 
-    max_iter = 2000
+    max_iter = 1
     alpha = 0.05
     list_model = [Model for i in range(max_iter)]
     reject = 0
