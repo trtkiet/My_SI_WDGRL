@@ -1,12 +1,12 @@
 delta: 4
-tpr:0.75
-reject: 90, detect: 120
+tpr:0.7666666666666667
+reject: 92, detect: 120
 delta: 3
-tpr:0.45
-reject: 54, detect: 120
+tpr:0.5508474576271186
+reject: 65, detect: 118
 delta: 2
-tpr:0.19327731092436976
-reject: 23, detect: 119
+tpr:0.24761904761904763
+reject: 26, detect: 105
 delta: 1
-tpr:0.08080808080808081
-reject: 8, detect: 99
+tpr:0.08450704225352113
+reject: 6, detect: 71

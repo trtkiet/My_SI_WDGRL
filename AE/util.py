@@ -108,7 +108,7 @@ def AE_AD(Xs, Xt, ae, alpha):
     #Take 5% largest in reconstruction loss
     O = np.argsort(reconstruction_loss)[-int(alpha*len(reconstruction_loss)):]
     O = [i - Xs.shape[0] for i in O if i >= Xs.shape[0]]
-    return O
+    return np.sort(O)
 
 def get_ad_interval(X, X_hat, X_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha):
     itv = [np.NINF, np.Inf]
@@ -163,18 +163,18 @@ def compute_yz(X, etaj, zk, n):
 def max_sum(X):
     return 0
 
-def parametric_si(Xz, a, b, zk, wdgrl, ae, alpha):
-    Xz = torch.FloatTensor(Xz)
-    Xz_hat = wdgrl.extract_feature(Xz.cuda())
-    Xz_tilde = ae.forward(Xz_hat)
-    reconstruction_loss = ae.reconstruction_loss(Xz_hat)
+def parametric_si(Xz, a, b, zk, wdgrl, ae, alpha, ns):
+    Xz = torch.FloatTensor(Xz).cpu()
+    Xz_hat = wdgrl.extract_feature(Xz.to(wdgrl.device)).cpu()
+    Xz_tilde = ae.forward(Xz_hat.to(ae.device)).cpu()
+    reconstruction_loss = ae.reconstruction_loss(Xz_hat.to(ae.device))
     reconstruction_loss = [i.item() for i in reconstruction_loss]
-    Oz = [max_sum(Xz_hat.cpu().numpy())]
+    Oz = AE_AD(Xz_hat[:ns], Xz_hat[ns:], ae, alpha)
     itv = get_ad_interval(Xz, Xz_hat, Xz_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha)
     return itv[1] - min(zk, itv[1]), Oz
 
 
-def run_parametric_si(X, etaj, n, threshold, wdgrl, ae, alpha):
+def run_parametric_si(X, etaj, n, threshold, wdgrl, ae, alpha, ns):
     zk = -threshold
 
     list_zk = [zk]
@@ -182,13 +182,10 @@ def run_parametric_si(X, etaj, n, threshold, wdgrl, ae, alpha):
 
     while zk < threshold:
         Xz, a, b = compute_yz(X, etaj, zk, n)
-        skz, Oz = parametric_si(Xz, a, b, zk, wdgrl, ae, alpha)
+        skz, Oz = parametric_si(Xz, a, b, zk, wdgrl, ae, alpha, ns)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
-        if zk < threshold:
-            list_zk.append(zk)
-        else:
-            list_zk.append(threshold)
+        list_zk.append(zk)
         list_Oz.append(Oz)
         # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
         # print(f'Anomaly index: {Oz}')

@@ -2,11 +2,11 @@ from util import *
 import torch
 from multiprocessing import Pool
 import os
-from model import WDGRL
+from model import WDGRL, AutoEncoder
 import numpy as np
 
 def run_tpr(self):
-    _, delta, Model = self
+    _, delta, wdgrl, ae = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 75, 1
     mu_s, mu_t = 0, 2
@@ -14,15 +14,16 @@ def run_tpr(self):
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
-    Model.generator = Model.generator.cuda()
+    wdgrl.generator = wdgrl.generator.cuda()
+    ae.net = ae.net.cuda()
 
     xs = torch.FloatTensor(xs)
     ys = torch.LongTensor(ys)
     xt = torch.FloatTensor(xt)
     yt = torch.LongTensor(yt)
 
-    xs_hat = Model.extract_feature(xs.cuda())
-    xt_hat = Model.extract_feature(xt.cuda())
+    xs_hat = wdgrl.extract_feature(xs.cuda())
+    xt_hat = wdgrl.extract_feature(xt.cuda())
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
     xs_hat = xs_hat.cpu()
@@ -32,8 +33,11 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-    alpha = 2.5
-    O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
+    alpha = 0.05
+    O = AE_AD(xs_hat, xt_hat, ae, alpha)
+    X_tilde = ae.forward(x_hat.to(ae.device))
+    reconstruction_loss = ae.reconstruction_loss(x_hat.to(ae.device))
+    reconstruction_loss = [i.item() for i in reconstruction_loss]
     # print(len(O))
     if (len(O) == 0) or (len(O) == nt):
         return None
@@ -65,7 +69,7 @@ def run_tpr(self):
     
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
-    itv = get_ad_interval(X, x_hat, ns, nt, O, a, b, Model, alpha)
+    itv = get_ad_interval(X, x_hat, X_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha)
     # print(itv)
     cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
     p_value = float(2 * min(cdf, 1 - cdf))
@@ -83,9 +87,9 @@ if __name__ == '__main__':
     d = 1
     generator_hidden_dims = [4, 4, 2]
     critic_hidden_dims = [4, 2, 1]
-    Model = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
+    wdgrl = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
     index = None
-    with open("model/models.txt", "r") as f:
+    with open("model/wdgrl_models.txt", "r") as f:
         lines = f.readlines()
         for i, line in enumerate(lines):
             words = line[:-1].split("/")
@@ -95,11 +99,31 @@ if __name__ == '__main__':
     if index is None:
         print("Model not found")
         exit()
-    check_point = torch.load(f"model/wdgrl_{index}.pth", map_location=Model.device, weights_only=True)
-    Model.generator.load_state_dict(check_point['generator_state_dict'])
-    Model.critic.load_state_dict(check_point['critic_state_dict'])
-    Model.generator = Model.generator.cpu()
-    list_model = [Model for _ in range(max_iter)] 
+    check_point = torch.load(f"model/wdgrl_{index}.pth", map_location=wdgrl.device, weights_only=True)
+    wdgrl.generator.load_state_dict(check_point['generator_state_dict'])
+    wdgrl.critic.load_state_dict(check_point['critic_state_dict'])
+    wdgrl.generator = wdgrl.generator.cpu()
+
+    input_dim = generator_hidden_dims[-1]
+    encoder_hidden_dims = [2, 2, 1]
+    decoder_hidden_dims = [2, 2]
+    ae = AutoEncoder(input_dim=input_dim, encoder_hidden_dims=encoder_hidden_dims, decoder_hidden_dims=decoder_hidden_dims)
+    index = None
+    with open("model/ae_models.txt", "r") as f:
+        lines = f.readlines()
+        for i, line in enumerate(lines):
+            words = line[:-1].split("/")
+            if words[1] == str(input_dim) and words[2] == str(encoder_hidden_dims) and words[3] == str(decoder_hidden_dims):
+                index = i
+                break
+    if index is None:
+        print("Model not found")
+        exit()
+    check_point = torch.load(f"model/ae_{index}.pth", map_location=ae.device, weights_only=True)
+    ae.load_state_dict(check_point['state_dict'])
+    ae.net = ae.net.cpu()
+    list_wdgrl = [wdgrl for i in range(max_iter)]
+    list_ae = [ae for i in range(max_iter)]
     with open('results/tpr_oc.txt', 'w') as f:
         f.write('')
     for delta in range(1, 5):
@@ -107,7 +131,7 @@ if __name__ == '__main__':
         detect = 0
         list_p_value = []
         pool = Pool(initializer=np.random.seed)
-        list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
+        list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_wdgrl, list_ae))
         pool.close()
         pool.join()
 

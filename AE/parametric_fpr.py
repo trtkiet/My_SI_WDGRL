@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 from scipy.stats import kstest
 
 def run_fpr(self):
-    # np.random.seed(52907)
     _, wdgrl, ae = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 1
@@ -17,7 +16,7 @@ def run_fpr(self):
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
-    Model.generator = Model.generator.cuda()
+    wdgrl.generator = wdgrl.generator.cuda()
     ae.net = ae.net.cuda()
 
     xs = torch.FloatTensor(xs)
@@ -25,8 +24,8 @@ def run_fpr(self):
     xt = torch.FloatTensor(xt)
     yt = torch.LongTensor(yt)
 
-    xs_hat = Model.extract_feature(xs.cuda())
-    xt_hat = Model.extract_feature(xt.cuda())
+    xs_hat = wdgrl.extract_feature(xs.cuda())
+    xt_hat = wdgrl.extract_feature(xt.cuda())
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
     xs_hat = xs_hat.cpu()
@@ -38,7 +37,6 @@ def run_fpr(self):
     yt = yt.cpu()
     alpha = 0.05
     O = AE_AD(xs_hat, xt_hat, ae, alpha)
-    X_tilde = ae.forward(x_hat.to(ae.device))
     reconstruction_loss = ae.reconstruction_loss(x_hat.to(ae.device))
     reconstruction_loss = [i.item() for i in reconstruction_loss]
     # print(O)
@@ -59,7 +57,7 @@ def run_fpr(self):
     etajTx = etaj.T.dot(X)
     
     # print(f'Anomaly indexes: {O}')
-    print(f'etajTX: {etajTx}')
+    # print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
     etajTmu = etaj.T.dot(mu)
@@ -67,7 +65,7 @@ def run_fpr(self):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     threshold = 20
-    list_zk, list_Oz = run_parametric_si(X, etaj, ns+nt, threshold, wdgrl, ae, alpha)
+    list_zk, list_Oz = run_parametric_si(X, etaj, ns+nt, threshold, wdgrl, ae, alpha, ns)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
@@ -118,7 +116,7 @@ if __name__ == '__main__':
     ae.load_state_dict(check_point['state_dict'])
     ae.net = ae.net.cpu()
 
-    max_iter = 2000
+    max_iter = 1000
     alpha = 0.05
     list_wdgrl = [wdgrl for i in range(max_iter)]
     list_ae = [ae for i in range(max_iter)]
