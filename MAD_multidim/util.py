@@ -121,8 +121,9 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     v = np.zeros((X.shape[0], X_hat.shape[1]))
     # print(u.shape, v.shape)
     O = []
+    d = X.shape[1]
     for i in range(X_hat.shape[0]):
-        sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1), model)
+        sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, d).T, a[i].reshape(-1, d).T, b[i].reshape(-1, d).T, model)
         itv = intersect(itv, sub_itv)
     # print(u, v)
     # print(itv)
@@ -178,10 +179,10 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     itv = intersect(itv, sub_itv)
     return itv
 
-def compute_yz(X, etaj, zk, n):
+def compute_yz(X, etaj, zk):
     sq_norm = (np.linalg.norm(etaj))**2
 
-    e1 = np.identity(n) - (np.dot(etaj, etaj.T))/sq_norm
+    e1 = np.identity(X.shape[0]) - (np.dot(etaj, etaj.T))/sq_norm
     a = np.dot(e1, X)
 
     b = etaj/sq_norm
@@ -194,7 +195,10 @@ def max_sum(X):
     return 0
 
 def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
-    Xz = torch.FloatTensor(Xz)
+    Xz = Xz.reshape(ns + nt, Xz.shape[0] // (ns + nt))
+    a = a.reshape(ns + nt, a.shape[0] // (ns + nt))
+    b = b.reshape(ns + nt, b.shape[0] // (ns + nt))
+    Xz = torch.DoubleTensor(Xz)
     Xz_hat = model.extract_feature(Xz.cuda()).cpu().numpy()
     Xzs_hat = Xz_hat[:ns]
     Xzt_hat = Xz_hat[ns:]
@@ -212,24 +216,29 @@ def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
     list_Oz = []
 
     while zk < threshold:
-        Xz, a, b = compute_yz(X, etaj, zk, n)
+        Xz, a, b = compute_yz(X, etaj, zk)
         skz, Oz = parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
         list_zk.append(zk)
         list_Oz.append(Oz)
-        print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
-        print(f'Anomaly index: {Oz}')
-        print('-------------')
+        # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
+        # print(f'Anomaly index: {Oz}')
+        # print('-------------')
     return list_zk, list_Oz
         
-def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
+def cdf(mu, sigma, list_zk, list_Oz, etajTX, O, constraint):
     numerator = 0
     denominator = 0
     cnt = 0
     for each_interval in range(len(list_zk) - 1):
         al = list_zk[each_interval]
         ar = list_zk[each_interval + 1] - 1e-3
+
+        al = max(al, constraint[0])
+        ar = min(ar, constraint[1])
+        if (al > ar):
+            continue
 
         # print(f'observed O: {O}')
         # print(f'list_Oz: {list_Oz[each_interval]}')

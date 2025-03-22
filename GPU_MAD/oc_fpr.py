@@ -6,10 +6,8 @@ from model import WDGRL
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import kstest
-import timeit
+
 def run_fpr(self):
-    # np.random.seed(52907)
-    start = timeit.default_timer()
     _, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 1
@@ -44,33 +42,29 @@ def run_fpr(self):
     yt_hat = torch.zeros_like(yt)
     yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
-    X = np.vstack((xs, xt))
-    X = torch.FloatTensor(X)
-    j = np.random.choice(O)
+    j = np.random.choice(O, 1, replace=False)[0]
     etj = np.zeros((nt, 1))
     etj[j][0] = 1
     etOc = np.zeros((nt, 1))
     etOc[Oc] = 1
     etaj = np.vstack((np.zeros((ns, 1)), etj-(1/len(Oc))*etOc))
+    X = np.vstack((xs.numpy(), xt.numpy()))
 
-    etajTx = etaj.T.dot(X)
-    
-    # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
+    etajTX = etaj.T.dot(X)
+    # print(f'etajTX: {etajTX}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
     etajTmu = etaj.T.dot(mu)
     etajTsigmaetaj = etaj.T.dot(sigma).dot(etaj)
+
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
-    threshold = 20
-    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
-    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
-    p_value = 2 * min(CDF, 1 - CDF)
-    print(f'p-value: {p_value}')
-    # print('--------------------------')
-    end = timeit.default_timer()
-    print(f'Time: {end - start}s')
+    j = j + ns
+    itv = get_ad_interval(X, x_hat, ns, nt, O, a, b, Model, alpha)
+    print(itv)
+    cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
+    p_value = float(2 * min(cdf, 1 - cdf))
+    print(f'p_value: {p_value}')
     return p_value
 
 if __name__ == '__main__':
@@ -104,7 +98,7 @@ if __name__ == '__main__':
     reject = 0
     detect = 0
     list_p_value = []
-    pool = Pool(initializer=np.random.seed, processes=1)
+    pool = Pool(initializer=np.random.seed)
     list_result = pool.map(run_fpr, zip(range(max_iter), list_model))
     pool.close()
     pool.join()
@@ -116,10 +110,10 @@ if __name__ == '__main__':
 
             if (p_value < alpha):
                 reject += 1
-    with open(f"results/fpr_parametric.txt", "w") as f:
+    with open(f"results/fpr_oc.txt", "w") as f:
         f.write(str(reject/detect) + '\n')
         f.write(str(kstest(list_p_value, 'uniform')) + '\n')
     plt.hist(list_p_value)
-    plt.savefig(f'results/fpr_parametric.png')
+    plt.savefig(f'results/fpr_oc.png')
     plt.close()
 

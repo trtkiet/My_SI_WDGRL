@@ -1,5 +1,6 @@
 from mpmath import mp
 import numpy as np
+import cupy as gp
 import torch
 from typing import List
 
@@ -53,7 +54,6 @@ def solve_linear_inequality(u, v): #u + vz < 0
 
 def get_dnn_interval(Xtj, a, b, model):
     layers = []
-
     for name, param in model.generator.named_children():
         temp = dict(param._modules)
         
@@ -62,20 +62,19 @@ def get_dnn_interval(Xtj, a, b, model):
                 layers.append('Linear')
             elif ('ReLU' in str(layer_name)):
                 layers.append('ReLU')
-
     ptr = 0
     itv = [np.NINF, np.Inf]
-    u = a
-    v = b
-    temp = Xtj
+    u = gp.asarray(a); v = gp.asarray(b)
+    temp = gp.asarray(Xtj)
+    # print(temp.device)
     weight = None
     bias = None
     for name, param in model.generator.named_parameters():
         if (layers[ptr] == 'Linear'):
             if ('weight' in name):
-                weight = param.data.cpu().detach().numpy()
+                weight = gp.asarray(param.data)
             elif ('bias' in name):
-                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
+                bias = gp.asarray(param.data.reshape(-1, 1))
                 ptr += 1
                 temp = weight.dot(temp) + bias
                 u = weight.dot(u) + bias
@@ -83,7 +82,7 @@ def get_dnn_interval(Xtj, a, b, model):
 
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
-            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
+            Relu_matrix = gp.zeros((temp.shape[0], temp.shape[0]))
             sub_itv = [np.NINF, np.inf]
             for i in range(temp.shape[0]):
                 if temp[i] > 0:
@@ -95,7 +94,7 @@ def get_dnn_interval(Xtj, a, b, model):
             temp = Relu_matrix.dot(temp)
             u = Relu_matrix.dot(u)
             v = Relu_matrix.dot(v)
-    return itv, u[:, 0], v[:, 0]
+    return itv, u[:, 0].get(), v[:, 0].get()
 
 def median(a):
     return np.argsort(a)[len(a) // 2]

@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import kstest
 import timeit
+
 def run_fpr(self):
     # np.random.seed(52907)
     start = timeit.default_timer()
@@ -69,8 +70,7 @@ def run_fpr(self):
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
     # print('--------------------------')
-    end = timeit.default_timer()
-    print(f'Time: {end - start}s')
+    print(f'Time: {timeit.default_timer() - start}')
     return p_value
 
 if __name__ == '__main__':
