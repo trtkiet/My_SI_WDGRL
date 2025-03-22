@@ -43,13 +43,13 @@ def solve_linear_inequality(u, v): #u + vz < 0
     v = float(v)
     if (v > -1e-16 and v < 1e-16):
         if (u <= 1e-7):
-            return [-np.Inf, np.Inf]
+            return [-np.inf, np.inf]
         else:
             print('error', u, v)
             return None
     if (v < 0):
-        return [-u/v, np.Inf]
-    return [np.NINF, -u/v]
+        return [-u/v, np.inf]
+    return [-np.inf, -u/v]
 
 def get_dnn_interval(Xtj, a, b, model):
     layers = []
@@ -64,7 +64,7 @@ def get_dnn_interval(Xtj, a, b, model):
                 layers.append('ReLU')
 
     ptr = 0
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
     u = a
     v = b
     temp = Xtj
@@ -84,7 +84,7 @@ def get_dnn_interval(Xtj, a, b, model):
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
             Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
-            sub_itv = [np.NINF, np.inf]
+            sub_itv = [-np.inf, np.inf]
             for i in range(temp.shape[0]):
                 if temp[i] > 0:
                     Relu_matrix[i][i] = 1
@@ -116,7 +116,7 @@ def MAD_AD(Xs, Xt, alpha):
     return np.sort(O)
 
 def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
     u = np.zeros((X.shape[0], X_hat.shape[1]))
     v = np.zeros((X.shape[0], X_hat.shape[1]))
     # print(u.shape, v.shape)
@@ -127,7 +127,7 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
         itv = intersect(itv, sub_itv)
     # print(u, v)
     # print(itv)
-    sub_itv = [np.NINF, np.inf]
+    sub_itv = [-np.inf, np.inf]
     for d in range(X_hat.shape[1]):
         k1 = median(X_hat[:, d])
         for i in range(X_hat.shape[0]):
@@ -199,7 +199,7 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
     a = a.reshape(ns + nt, a.shape[0] // (ns + nt))
     b = b.reshape(ns + nt, b.shape[0] // (ns + nt))
     Xz = torch.DoubleTensor(Xz)
-    Xz_hat = model.extract_feature(Xz.cuda()).cpu().numpy()
+    Xz_hat = model.extract_feature(Xz.to(model.device)).cpu().numpy()
     Xzs_hat = Xz_hat[:ns]
     Xzt_hat = Xz_hat[ns:]
     Oz = MAD_AD(Xzs_hat, Xzt_hat, alpha)

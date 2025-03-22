@@ -18,13 +18,14 @@ def run_fpr(self):
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
     Model.generator = Model.generator.cuda().double()
+    # Model.generator = Model.generator.double()
 
     xs = torch.DoubleTensor(xs)
     ys = torch.LongTensor(ys)
     xt = torch.DoubleTensor(xt)
     yt = torch.LongTensor(yt)
-    xs_hat = Model.extract_feature(xs.cuda())
-    xt_hat = Model.extract_feature(xt.cuda())
+    xs_hat = Model.extract_feature(xs.to(Model.device))
+    xt_hat = Model.extract_feature(xt.to(Model.device))
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
     xs_hat = xs_hat.cpu()
