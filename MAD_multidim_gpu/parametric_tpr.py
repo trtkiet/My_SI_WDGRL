@@ -21,27 +21,20 @@ def run_tpr(self):
     ys = torch.LongTensor(ys)
     xt = torch.DoubleTensor(xt)
     yt = torch.LongTensor(yt)
-    xs_hat = Model.extract_feature(xs.to(Model.device))
-    xt_hat = Model.extract_feature(xt.to(Model.device))
+    xs = xs.to(Model.device)
+    xt = xt.to(Model.device)
+    xs_hat = Model.extract_feature(xs)
+    xt_hat = Model.extract_feature(xt)
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
-
-    xs_hat = xs_hat.cpu()
-    xt_hat = xt_hat.cpu()
-    x_hat = x_hat.cpu()
-    xs = xs.cpu()
-    xt = xt.cpu()
-    ys = ys.cpu()
-    yt = yt.cpu()
-    alpha = 2.5
-    O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
-    # print(O)
+    alpha = 15
+    O = MAD_AD(xs_hat, xt_hat, alpha)
+    # print(len(O))
     if (len(O) == 0) or (len(O) == nt):
         return None
     yt_hat = torch.zeros_like(yt)
     yt_hat[O] = 1
-    Oc = list(np.where(yt_hat == 0)[0])
-    X = np.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
-    X = torch.DoubleTensor(X)
+    Oc = list(torch.where(yt_hat == 0)[0])
+    X = torch.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
     true_O = []
     for i in O:
         if yt[i] == 1:
@@ -49,33 +42,32 @@ def run_tpr(self):
     if len(true_O) == 0:
         return None
     j = np.random.choice(O)
-    etj = np.zeros((nt * d, 1)) 
+    etj = torch.zeros((nt * d, 1), device=Model.device, dtype=torch.double) 
     for i in range(d):
         etj[j * d + i] = 1
-    etOc = np.zeros((nt * d, 1))
+    etOc = torch.zeros((nt * d, 1), device=Model.device, dtype=torch.double)
     for i in Oc:
         for k in range(d):
             etOc[i * d + k] = 1
-    s = np.zeros((ns * d + nt * d, 1))
     for i in range(d):
         testj = X[j * d + i]
         testOc = (1/len(Oc)) * np.sum(X[Oc[k] * d + i] for k in range(len(Oc)))
-        if np.sign(testj - testOc) == -1:
+        if torch.sign(testj - testOc) == -1:
             etj[j * d + i] = -1
             for k in Oc:
                 etOc[k * d + i] = -1
-    etaj = np.vstack((np.zeros((ns * d, 1)), etj - (1/len(Oc))*etOc))
-    etajTx = etaj.T.dot(X)
+    etaj = torch.vstack((torch.zeros((ns * d, 1), device=Model.device), etj - (1/len(Oc))*etOc))
+    etajTx = etaj.T.matmul(X)
     
-    # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
-    mu = np.vstack((np.full((ns * d,1), mu_s), np.full((nt * d,1), mu_t)))
-    sigma = np.identity(ns * d + nt * d)
-    etajTmu = etaj.T.dot(mu)
-    etajTsigmaetaj = etaj.T.dot(sigma).dot(etaj)
-    b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
-    a = (np.identity(ns * d + nt * d) - b.dot(etaj.T)).dot(X)
-    itv = [np.NINF, np.Inf]
+    print(f'Anomaly indexes: {O}')
+    print(f'etajTX: {etajTx}')
+    mu = torch.vstack((torch.full((ns * d,1), mu_s, device=Model.device, dtype=torch.double), torch.full((nt * d,1), mu_t, device=Model.device, dtype=torch.double)))
+    sigma = torch.eye(ns * d + nt * d, device=Model.device, dtype=torch.double)
+    etajTmu = etaj.T.matmul(mu)
+    etajTsigmaetaj = etaj.T.matmul(sigma).matmul(etaj)
+    b = sigma.matmul(etaj).matmul(torch.linalg.inv(etajTsigmaetaj))
+    a = (torch.eye(ns * d + nt * d, device=Model.device, dtype=torch.double) - b.matmul(etaj.T)).matmul(X)
+    itv = [-np.inf, np.inf]
     for i in range(d):
         testj = a[j * d + i]
         testOc = (1/len(Oc)) * np.sum(a[Oc[k] * d + i] for k in range(len(Oc)))
@@ -83,15 +75,14 @@ def run_tpr(self):
             itv = intersect(itv, solve_linear_inequality(a[j * d + i] - (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), b[j * d + i] - (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
         else:
             itv = intersect(itv, solve_linear_inequality(-a[j * d + i] + (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), -b[j * d + i] + (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
-    itv = intersect(itv, get_ad_interval(X.reshape((ns + nt, d)), x_hat, ns, nt, O, a.reshape((ns + nt, d)), b.reshape((ns + nt, d)), Model, alpha))
+    threshold = 20 * np.sqrt(etajTsigmaetaj[0][0].detach().cpu().numpy())
+    threshold = min(threshold, max(np.abs(itv[0]), np.abs(itv[1])))
     # print(itv)
-    cdf = truncated_cdf(etajTx[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
-    p_value = 0 
-    if cdf is not None:
-        p_value = float(2 * min(cdf, 1 - cdf))
-    else:
-        return None
-    print(f'p_value: {p_value}')
+    # print(etajTsigmaetaj)
+    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
+    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O, itv)
+    p_value = 2 * min(CDF, 1 - CDF)
+    print(f'p-value: {p_value}')
     return p_value
 
 if __name__ == '__main__':
@@ -99,7 +90,7 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
+    max_iter = 1
     alpha = 0.05
     list_tpr = []
     d = 16
@@ -122,13 +113,13 @@ if __name__ == '__main__':
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
     list_model = [Model for _ in range(max_iter)] 
-    with open('results/tpr_oc.txt', 'w') as f:
+    with open('results/tpr_parametric.txt', 'w') as f:
         f.write('')
-    for delta in range(1, 5):
+    for delta in reversed(range(4, 5)):
         reject = 0
         detect = 0
         list_p_value = []
-        pool = Pool(initializer=np.random.seed)
+        pool = Pool(initializer=np.random.seed, processes=1)
         list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
         pool.close()
         pool.join()
@@ -140,9 +131,10 @@ if __name__ == '__main__':
 
                 if (p_value < alpha):
                     reject += 1
-        with open("results/tpr_oc.txt", "a") as f:
+        with open("results/tpr_parametric.txt", "a") as f:
             f.write('delta: ' + str(delta) + '\n')
             f.write('tpr:' + str(reject/detect) + '\n')
             f.write(f'reject: {reject}, detect: {detect}\n')
         print(f'delta: {delta}, TPR: {reject/detect}')
+    
 

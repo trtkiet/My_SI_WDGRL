@@ -73,17 +73,17 @@ def get_dnn_interval(Xtj, a, b, model):
     for name, param in model.generator.named_parameters():
         if (layers[ptr] == 'Linear'):
             if ('weight' in name):
-                weight = param.data.cpu().detach().numpy()
+                weight = param.data
             elif ('bias' in name):
-                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
+                bias = param.data.reshape(-1, 1)
                 ptr += 1
-                temp = weight.dot(temp) + bias
-                u = weight.dot(u) + bias
-                v = weight.dot(v)
+                temp = weight.matmul(temp) + bias
+                u = weight.matmul(u) + bias
+                v = weight.matmul(v)
 
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
-            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
+            Relu_matrix = torch.zeros((temp.shape[0], temp.shape[0]), device=temp.device, dtype=torch.float64)
             sub_itv = [-np.inf, np.inf]
             for i in range(temp.shape[0]):
                 if temp[i] > 0:
@@ -92,20 +92,22 @@ def get_dnn_interval(Xtj, a, b, model):
                 else:
                     sub_itv = intersect(sub_itv, solve_linear_inequality(u[i], v[i]))
             itv = intersect(itv, sub_itv)
-            temp = Relu_matrix.dot(temp)
-            u = Relu_matrix.dot(u)
-            v = Relu_matrix.dot(v)
+            temp = Relu_matrix.matmul(temp)
+            u = Relu_matrix.matmul(u)
+            v = Relu_matrix.matmul(v)
     return itv, u[:, 0], v[:, 0]
 
 def median(a):
-    return np.argsort(a)[len(a) // 2]
+    return torch.argsort(a)[len(a) // 2]
 
 def MAD_AD(Xs, Xt, alpha):
     O = []
-    X = np.concatenate((Xs, Xt), axis=0)
+    Xs = Xs
+    Xt = Xt
+    X = torch.concatenate((Xs, Xt), axis=0)
     for i in range(X.shape[1]):
         median1 = median(X[:, i])
-        absolute_deviation = np.abs(X[:, i] - X[median1, i])
+        absolute_deviation = torch.abs(X[:, i] - X[median1, i])
         median2 = median(absolute_deviation)
         
         lower = X[median1, i] - alpha*absolute_deviation[median2]
@@ -117,8 +119,8 @@ def MAD_AD(Xs, Xt, alpha):
 
 def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     itv = [-np.inf, np.inf]
-    u = np.zeros((X.shape[0], X_hat.shape[1]))
-    v = np.zeros((X.shape[0], X_hat.shape[1]))
+    u = torch.zeros((X.shape[0], X_hat.shape[1]), device=X.device)
+    v = torch.zeros((X.shape[0], X_hat.shape[1]), device=X.device)
     # print(u.shape, v.shape)
     O = []
     d = X.shape[1]
@@ -136,17 +138,17 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
             else:
                 sub_itv = intersect(sub_itv, solve_linear_inequality(u[k1, d] - u[i, d], v[k1, d] - v[i, d]))
 
-        dev = np.abs(X_hat[:, d] - X_hat[k1, d])
+        dev = torch.abs(X_hat[:, d] - X_hat[k1, d])
         k2 = median(dev)
-        sk2 = np.sign(X_hat[k2, d] - X_hat[k1, d])
+        sk2 = torch.sign(X_hat[k2, d] - X_hat[k1, d])
         for j in range(X_hat.shape[0]):
             if abs(X_hat[j, d] - X_hat[k1, d]) <= abs(X_hat[k2, d] - X_hat[k1, d]):
-                sj = np.sign(X_hat[j, d] - X_hat[k1, d])
+                sj = torch.sign(X_hat[j, d] - X_hat[k1, d])
                 sub_itv = intersect(sub_itv, solve_linear_inequality(
                     sj * (u[j, d] - u[k1, d]) - sk2 * (u[k2, d] - u[k1, d]), 
                     sj * (v[j, d] - v[k1, d]) - sk2 * (v[k2, d] - v[k1, d])))
             else:
-                sj = np.sign(X_hat[j, d] - X_hat[k1, d])
+                sj = torch.sign(X_hat[j, d] - X_hat[k1, d])
                 sub_itv = intersect(sub_itv, solve_linear_inequality(
                     -sj * (u[j, d] - u[k1, d]) + sk2 * (u[k2, d] - u[k1, d]), 
                     -sj * (v[j, d] - v[k1, d]) + sk2 * (v[k2, d] - v[k1, d])))
@@ -180,10 +182,10 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     return itv
 
 def compute_yz(X, etaj, zk):
-    sq_norm = (np.linalg.norm(etaj))**2
+    sq_norm = (torch.linalg.norm(etaj))**2
 
-    e1 = np.identity(X.shape[0]) - (np.dot(etaj, etaj.T))/sq_norm
-    a = np.dot(e1, X)
+    e1 = torch.eye(X.shape[0], device=X.device) - (torch.matmul(etaj, etaj.T))/sq_norm
+    a = torch.matmul(e1, X)
 
     b = etaj/sq_norm
 
@@ -198,8 +200,7 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
     Xz = Xz.reshape(ns + nt, Xz.shape[0] // (ns + nt))
     a = a.reshape(ns + nt, a.shape[0] // (ns + nt))
     b = b.reshape(ns + nt, b.shape[0] // (ns + nt))
-    Xz = torch.DoubleTensor(Xz)
-    Xz_hat = model.extract_feature(Xz.to(model.device)).cpu().numpy()
+    Xz_hat = model.extract_feature(Xz)
     Xzs_hat = Xz_hat[:ns]
     Xzt_hat = Xz_hat[ns:]
     Oz = MAD_AD(Xzs_hat, Xzt_hat, alpha)
@@ -210,21 +211,22 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
 
 
 def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
-    zk = threshold[0]
+    zk = -threshold
 
     list_zk = [zk]
     list_Oz = []
-
-    while zk < threshold[1]:
+    X = X.cuda()
+    etaj = etaj.cuda()
+    while zk < threshold:
         Xz, a, b = compute_yz(X, etaj, zk)
         skz, Oz = parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
         list_zk.append(zk)
         list_Oz.append(Oz)
-        # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
-        # print(f'Anomaly index: {Oz}')
-        # print('-------------')
+        print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
+        print(f'Anomaly index: {Oz}')
+        print('-------------')
     return list_zk, list_Oz
         
 def cdf(mu, sigma, list_zk, list_Oz, etajTX, O, constraint):
@@ -244,15 +246,15 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O, constraint):
         # print(f'list_Oz: {list_Oz[each_interval]}')
         if (np.array_equal(O, list_Oz[each_interval]) == False):
             continue
-        # print(f'interval: {al} - {ar}')
+        print(f'interval: {al} - {ar}')
         cnt += 1
         denominator = denominator + mp.ncdf((ar - mu)/sigma) - mp.ncdf((al - mu)/sigma)
         if etajTX >= ar:
             numerator = numerator + mp.ncdf((ar - mu)/sigma) - mp.ncdf((al - mu)/sigma)
         elif (etajTX >= al) and (etajTX< ar):
             numerator = numerator + mp.ncdf((etajTX - mu)/sigma) - mp.ncdf((al - mu)/sigma)
-        # print(f'numerator: {numerator}')
-        # print(f'denominator: {denominator}')
+        print(f'numerator: {numerator}')
+        print(f'denominator: {denominator}')
     # print(f'numerator: {numerator}')
     # print(f'denominator: {denominator}')
     # print('cnt: ', cnt)

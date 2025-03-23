@@ -4,13 +4,15 @@ from multiprocessing import Pool
 import os
 from model import WDGRL
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import kstest
 
-def run_tpr(self):
-    _, delta, Model = self
+def run_fpr(self):
+    _, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
-    ns, nt, d = 150, 75, 1
+    ns, nt, d = 150, 25, 1
     mu_s, mu_t = 0, 2
-    delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
+    delta_s, delta_t = [0, 1, 2, 3, 4], [0]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
@@ -32,47 +34,37 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-    alpha = 2.5
+    alpha = 1.5
     O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
-    print(len(O))
+    # print(O)
     if (len(O) == 0) or (len(O) == nt):
         return None
     yt_hat = torch.zeros_like(yt)
     yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
-    X = np.vstack((xs, xt))
-    X = torch.FloatTensor(X)
-    true_O = []
-    for i in O:
-        if yt[i] == 1:
-            true_O.append(i)
-    if len(true_O) == 0:
-        return None
-    # print(f'len true_O: {len(true_O)}')
-    # print(f'len Oc: {len(Oc)}')
-    j = np.random.choice(true_O)
+    j = np.random.choice(O, 1, replace=False)[0]
     etj = np.zeros((nt, 1))
     etj[j][0] = 1
     etOc = np.zeros((nt, 1))
     etOc[Oc] = 1
     etaj = np.vstack((np.zeros((ns, 1)), etj-(1/len(Oc))*etOc))
+    X = np.vstack((xs.numpy(), xt.numpy()))
 
-    etajTx = etaj.T.dot(X)
-    
-    # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
+    etajTX = etaj.T.dot(X)
+    # print(f'etajTX: {etajTX}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
     etajTmu = etaj.T.dot(mu)
     etajTsigmaetaj = etaj.T.dot(sigma).dot(etaj)
+
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
-    threshold = 20
-    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha, O)
-    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
-    p_value = 2 * min(CDF, 1 - CDF)
-    print(f'p-value: {p_value}')
-    # print('--------------------------')
+    j = j + ns
+    itv = get_ad_interval(X, x_hat, ns, nt, O, a, b, Model, alpha)
+    print(itv)
+    cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
+    p_value = float(2 * min(cdf, 1 - cdf))
+    print(f'p_value: {p_value}')
     return p_value
 
 if __name__ == '__main__':
@@ -80,9 +72,6 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
-    alpha = 0.05
-    list_tpr = []
     d = 1
     generator_hidden_dims = [4, 4, 2]
     critic_hidden_dims = [4, 2, 1]
@@ -102,29 +91,29 @@ if __name__ == '__main__':
     Model.generator.load_state_dict(check_point['generator_state_dict'])
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
-    list_model = [Model for _ in range(max_iter)] 
-    with open('results/tpr_parametric.txt', 'w') as f:
-        f.write('')
-    for delta in reversed(range(1, 5)):
-        reject = 0
-        detect = 0
-        list_p_value = []
-        pool = Pool(initializer=np.random.seed)
-        list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
-        pool.close()
-        pool.join()
 
-        for p_value in list_result:
-            if p_value is not None:
-                detect += 1
-                list_p_value.append(p_value)
+    max_iter = 1
+    alpha = 0.05
+    list_model = [Model for i in range(max_iter)]
+    reject = 0
+    detect = 0
+    list_p_value = []
+    pool = Pool(initializer=np.random.seed)
+    list_result = pool.map(run_fpr, zip(range(max_iter), list_model))
+    pool.close()
+    pool.join()
 
-                if (p_value < alpha):
-                    reject += 1
-        with open("results/tpr_parametric.txt", "a") as f:
-            f.write('delta: ' + str(delta) + '\n')
-            f.write('tpr:' + str(reject/detect) + '\n')
-            f.write(f'reject: {reject}, detect: {detect}\n')
-        print(f'delta: {delta}, TPR: {reject/detect}')
-    
+    for p_value in list_result:
+        if p_value is not None:
+            detect += 1
+            list_p_value.append(p_value)
+
+            if (p_value < alpha):
+                reject += 1
+    with open(f"results/fpr_oc.txt", "w") as f:
+        f.write(str(reject/detect) + '\n')
+        f.write(str(kstest(list_p_value, 'uniform')) + '\n')
+    plt.hist(list_p_value)
+    plt.savefig(f'results/fpr_oc.png')
+    plt.close()
 

@@ -4,13 +4,16 @@ from multiprocessing import Pool
 import os
 from model import WDGRL
 import numpy as np
-
-def run_tpr(self):
-    _, delta, Model = self
+import matplotlib.pyplot as plt
+from scipy.stats import kstest
+import timeit
+def run_fpr(self):
+    start = timeit.default_timer()
+    _, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 16
     mu_s, mu_t = 0, 2
-    delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
+    delta_s, delta_t = [0, 1, 2, 3, 4], [0]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
@@ -42,12 +45,6 @@ def run_tpr(self):
     Oc = list(np.where(yt_hat == 0)[0])
     X = np.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
     X = torch.DoubleTensor(X)
-    true_O = []
-    for i in O:
-        if yt[i] == 1:
-            true_O.append(i)
-    if len(true_O) == 0:
-        return None
     j = np.random.choice(O)
     etj = np.zeros((nt * d, 1)) 
     for i in range(d):
@@ -83,15 +80,14 @@ def run_tpr(self):
             itv = intersect(itv, solve_linear_inequality(a[j * d + i] - (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), b[j * d + i] - (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
         else:
             itv = intersect(itv, solve_linear_inequality(-a[j * d + i] + (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), -b[j * d + i] + (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
-    itv = intersect(itv, get_ad_interval(X.reshape((ns + nt, d)), x_hat, ns, nt, O, a.reshape((ns + nt, d)), b.reshape((ns + nt, d)), Model, alpha))
-    # print(itv)
-    cdf = truncated_cdf(etajTx[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
-    p_value = 0 
-    if cdf is not None:
-        p_value = float(2 * min(cdf, 1 - cdf))
-    else:
-        return None
-    print(f'p_value: {p_value}')
+    threshold = 20
+    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
+    CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O, itv)
+    p_value = 2 * min(CDF, 1 - CDF)
+    print(f'p-value: {p_value}')
+    # print('--------------------------')
+    end = timeit.default_timer()
+    # print(f'Time: {end - start}s')
     return p_value
 
 if __name__ == '__main__':
@@ -99,9 +95,6 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
-    alpha = 0.05
-    list_tpr = []
     d = 16
     generator_hidden_dims = [32, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 32, 16, 8, 4]
     critic_hidden_dims = [64, 64, 64, 64, 64, 32, 16, 8 , 4, 2, 1]
@@ -121,28 +114,29 @@ if __name__ == '__main__':
     Model.generator.load_state_dict(check_point['generator_state_dict'])
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
-    list_model = [Model for _ in range(max_iter)] 
-    with open('results/tpr_oc.txt', 'w') as f:
-        f.write('')
-    for delta in range(1, 5):
-        reject = 0
-        detect = 0
-        list_p_value = []
-        pool = Pool(initializer=np.random.seed)
-        list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
-        pool.close()
-        pool.join()
 
-        for p_value in list_result:
-            if p_value is not None:
-                detect += 1
-                list_p_value.append(p_value)
+    max_iter = 1000
+    alpha = 0.05
+    list_model = [Model for i in range(max_iter)]
+    reject = 0
+    detect = 0
+    list_p_value = []
+    pool = Pool(initializer=np.random.seed)
+    list_result = pool.map(run_fpr, zip(range(max_iter), list_model))
+    pool.close()
+    pool.join()
 
-                if (p_value < alpha):
-                    reject += 1
-        with open("results/tpr_oc.txt", "a") as f:
-            f.write('delta: ' + str(delta) + '\n')
-            f.write('tpr:' + str(reject/detect) + '\n')
-            f.write(f'reject: {reject}, detect: {detect}\n')
-        print(f'delta: {delta}, TPR: {reject/detect}')
+    for p_value in list_result:
+        if p_value is not None:
+            detect += 1
+            list_p_value.append(p_value)
+
+            if (p_value < alpha):
+                reject += 1
+    with open(f"results/fpr_parametric.txt", "w") as f:
+        f.write(str(reject/detect) + '\n')
+        f.write(str(kstest(list_p_value, 'uniform')) + '\n')
+    plt.hist(list_p_value)
+    plt.savefig(f'results/fpr_parametric.png')
+    plt.close()
 

@@ -34,7 +34,7 @@ def run_tpr(self):
     yt = yt.cpu()
     alpha = 2.5
     O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
-    # print(O)
+    # print(len(O))
     if (len(O) == 0) or (len(O) == nt):
         return None
     yt_hat = torch.zeros_like(yt)
@@ -48,7 +48,7 @@ def run_tpr(self):
             true_O.append(i)
     if len(true_O) == 0:
         return None
-    j = np.random.choice(O)
+    j = np.random.choice(true_O)
     etj = np.zeros((nt * d, 1)) 
     for i in range(d):
         etj[j * d + i] = 1
@@ -58,8 +58,8 @@ def run_tpr(self):
             etOc[i * d + k] = 1
     s = np.zeros((ns * d + nt * d, 1))
     for i in range(d):
-        testj = X[j * d + i]
-        testOc = (1/len(Oc)) * np.sum(X[Oc[k] * d + i] for k in range(len(Oc)))
+        testj = xt[j, i]
+        testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
         if np.sign(testj - testOc) == -1:
             etj[j * d + i] = -1
             for k in Oc:
@@ -67,23 +67,28 @@ def run_tpr(self):
     etaj = np.vstack((np.zeros((ns * d, 1)), etj - (1/len(Oc))*etOc))
     etajTx = etaj.T.dot(X)
     
-    # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
+    print(f'Anomaly indexes: {O}')
+    print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns * d,1), mu_s), np.full((nt * d,1), mu_t)))
     sigma = np.identity(ns * d + nt * d)
     etajTmu = etaj.T.dot(mu)
     etajTsigmaetaj = etaj.T.dot(sigma).dot(etaj)
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns * d + nt * d) - b.dot(etaj.T)).dot(X)
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
     for i in range(d):
-        testj = a[j * d + i]
-        testOc = (1/len(Oc)) * np.sum(a[Oc[k] * d + i] for k in range(len(Oc)))
+        testj = xt[j, i]
+        testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
         if (testj - testOc) < 0:
-            itv = intersect(itv, solve_linear_inequality(a[j * d + i] - (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), b[j * d + i] - (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
+            itv = intersect(itv, solve_linear_inequality(a[j * d + i + ns * d] - (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), b[j * d + i + ns * d] - (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
         else:
-            itv = intersect(itv, solve_linear_inequality(-a[j * d + i] + (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), -b[j * d + i] + (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
-    threshold = 20
+            itv = intersect(itv, solve_linear_inequality(-a[j * d + i + ns * d] + (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), -b[j * d + i + ns * d] + (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
+    threshold = 20 * np.sqrt(etajTsigmaetaj[0][0])
+    threshold = [-threshold, threshold]
+    threshold[0] = max(threshold[0], itv[0])
+    threshold[1] = min(threshold[1], itv[1])
+    # print(itv)
+    # print(etajTsigmaetaj)
     list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O, itv)
     p_value = 2 * min(CDF, 1 - CDF)
@@ -95,7 +100,7 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
+    max_iter = 10
     alpha = 0.05
     list_tpr = []
     d = 16
@@ -120,11 +125,11 @@ if __name__ == '__main__':
     list_model = [Model for _ in range(max_iter)] 
     with open('results/tpr_parametric.txt', 'w') as f:
         f.write('')
-    for delta in reversed(range(1, 5)):
+    for delta in reversed(range(4, 5)):
         reject = 0
         detect = 0
         list_p_value = []
-        pool = Pool(initializer=np.random.seed)
+        pool = Pool(initializer=np.random.seed, processes=1)
         list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
         pool.close()
         pool.join()
