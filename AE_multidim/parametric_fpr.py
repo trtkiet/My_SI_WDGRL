@@ -18,12 +18,14 @@ def run_fpr(self):
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
-    wdgrl.generator = wdgrl.generator.cuda()
-    ae.net = ae.net.cuda()
+    wdgrl.generator = wdgrl.generator.cuda().double()
+    ae.net = ae.net.cuda().double()
+    # wdgrl.generator = wdgrl.generator.double()
+    # ae.net = ae.net.double()
 
-    xs = torch.FloatTensor(xs)
+    xs = torch.DoubleTensor(xs)
     ys = torch.LongTensor(ys)
-    xt = torch.FloatTensor(xt)
+    xt = torch.DoubleTensor(xt)
     yt = torch.LongTensor(yt)
 
     xs_hat = wdgrl.extract_feature(xs.cuda())

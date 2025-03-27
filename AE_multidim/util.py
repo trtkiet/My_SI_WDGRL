@@ -44,13 +44,13 @@ def solve_linear_inequality(u, v): #u + vz < 0
     # print(u, v)
     if (v > -1e-16 and v < 1e-16):
         if (u <= 0):
-            return [-np.Inf, np.Inf]
+            return [-np.inf, np.inf]
         else:
             print('error', u, v)
             return None
     if (v < 0):
-        return [-u/v, np.Inf]
-    return [np.NINF, -u/v]
+        return [-u/v, np.inf]
+    return [-np.inf, -u/v]
 
 def get_dnn_interval(X, a, b, model):
     layers = []
@@ -110,8 +110,7 @@ def AE_AD(Xs_hat, Xt_hat, X_tilde, alpha):
     return np.sort(O)
 
 def get_ad_interval(X, X_hat, X_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha):
-    itv = [np.NINF, np.Inf]
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
     sub_itv, u, v = get_dnn_interval(X, a, b, wdgrl.generator)
     itv = intersect(itv, sub_itv)
     sub_itv, p, q= get_dnn_interval(X_hat, u, v, ae)
@@ -152,9 +151,9 @@ def parametric_si(Xz, a, b, zk, wdgrl, ae, alpha, ns, nt):
     Xz = Xz.reshape(ns+nt, -1)
     a = a.reshape(ns+nt, -1)
     b = b.reshape(ns+nt, -1)
-    Xz_hat = wdgrl.extract_feature(torch.FloatTensor(Xz).to(wdgrl.device)).cpu().numpy()
-    Xz_tilde = ae.forward(torch.FloatTensor(Xz_hat).to(ae.device)).cpu().numpy()
-    reconstruction_loss = ae.reconstruction_loss(torch.FloatTensor(Xz_hat).to(ae.device))
+    Xz_hat = wdgrl.extract_feature(torch.DoubleTensor(Xz).to(wdgrl.device)).cpu().numpy()
+    Xz_tilde = ae.forward(torch.DoubleTensor(Xz_hat).to(ae.device)).cpu().numpy()
+    reconstruction_loss = ae.reconstruction_loss(torch.DoubleTensor(Xz_hat).to(ae.device))
     reconstruction_loss = [i.item() for i in reconstruction_loss]
     Oz = AE_AD(Xz_hat[:ns], Xz_hat[ns:], Xz_tilde, alpha)
     itv = get_ad_interval(Xz, Xz_hat, Xz_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha)
@@ -202,53 +201,6 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
         return float(numerator/denominator)
     else:
         return None
-
-def get_interval(Xtj, a, b, model):
-    layers = []
-
-    for name, param in model.generator.named_children():
-        temp = dict(param._modules)
-        
-        for layer_name in temp.values():
-            if ('Linear' in str(layer_name)):
-                layers.append('Linear')
-            elif ('ReLU' in str(layer_name)):
-                layers.append('ReLU')
-
-    ptr = 0
-    itv = [np.NINF, np.Inf]
-    u = a
-    v = b
-    temp = Xtj
-    weight = None
-    bias = None
-    for name, param in model.generator.named_parameters():
-        if (layers[ptr] == 'Linear'):
-            if ('weight' in name):
-                weight = param.data.cpu().detach().numpy()
-            elif ('bias' in name):
-                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
-                ptr += 1
-                temp = weight.dot(temp) + bias
-                u = weight.dot(u) + bias
-                v = weight.dot(v)
-
-        if (ptr < len(layers) and layers[ptr] == 'ReLU'):
-            ptr += 1
-            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
-            sub_itv = [np.NINF, np.inf]
-            for i in range(temp.shape[0]):
-                if temp[i] > 0:
-                    Relu_matrix[i][i] = 1
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(-u[i][0], -v[i][0]))
-                else:
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(u[i][0], v[i][0]))
-            itv = intersect(itv, sub_itv)
-            temp = Relu_matrix.dot(temp)
-            u = Relu_matrix.dot(u)
-            v = Relu_matrix.dot(v)
-
-    return itv, u, v
 
 def truncated_cdf(etajTy, mu, sigma, left, right):
     numerator = mp.ncdf((etajTy - mu) / sigma) - mp.ncdf((left - mu) / sigma)
