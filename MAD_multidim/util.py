@@ -51,7 +51,7 @@ def solve_linear_inequality(u, v): #u + vz < 0
         return [-u/v, np.inf]
     return [-np.inf, -u/v]
 
-def get_dnn_interval(Xtj, a, b, model):
+def get_dnn_interval(X, a, b, model):
     layers = []
 
     for name, param in model.generator.named_children():
@@ -65,37 +65,34 @@ def get_dnn_interval(Xtj, a, b, model):
 
     ptr = 0
     itv = [-np.inf, np.inf]
-    u = a
-    v = b
-    temp = Xtj
     weight = None
     bias = None
     for name, param in model.generator.named_parameters():
         if (layers[ptr] == 'Linear'):
             if ('weight' in name):
-                weight = param.data.cpu().detach().numpy()
+                weight = np.asarray(param.data.cpu())
             elif ('bias' in name):
-                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
+                bias = np.asarray(param.data.cpu()).reshape(-1, 1)
+                bias = bias.dot(np.ones((1, X.shape[0]))).T
                 ptr += 1
-                temp = weight.dot(temp) + bias
-                u = weight.dot(u) + bias
-                v = weight.dot(v)
+                X = X.dot(weight.T) + bias
+                a = a.dot(weight.T) + bias
+                b = b.dot(weight.T)
 
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
-            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
             sub_itv = [-np.inf, np.inf]
-            for i in range(temp.shape[0]):
-                if temp[i] > 0:
-                    Relu_matrix[i][i] = 1
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(-u[i], -v[i]))
-                else:
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(u[i], v[i]))
+            for i in range(X.shape[0]):
+                for j in range(X.shape[1]):
+                    if X[i][j] > 0:
+                        sub_itv = intersect(sub_itv, solve_linear_inequality(-a[i][j], -b[i][j]))
+                    else:
+                        sub_itv = intersect(sub_itv, solve_linear_inequality(a[i][j], b[i][j]))
+                        X[i][j] = 0
+                        a[i][j] = 0
+                        b[i][j] = 0
             itv = intersect(itv, sub_itv)
-            temp = Relu_matrix.dot(temp)
-            u = Relu_matrix.dot(u)
-            v = Relu_matrix.dot(v)
-    return itv, u[:, 0], v[:, 0]
+    return itv, a, b
 
 def median(a):
     return np.argsort(a)[len(a) // 2]
@@ -115,16 +112,12 @@ def MAD_AD(Xs, Xt, alpha):
                 O.append(j)
     return np.sort(O)
 
-def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
+def get_ad_interval(X, X_hat, ns, a, b, model, alpha):
     itv = [-np.inf, np.inf]
-    u = np.zeros((X.shape[0], X_hat.shape[1]))
-    v = np.zeros((X.shape[0], X_hat.shape[1]))
     # print(u.shape, v.shape)
-    O = []
     d = X.shape[1]
-    for i in range(X_hat.shape[0]):
-        sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, d).T, a[i].reshape(-1, d).T, b[i].reshape(-1, d).T, model)
-        itv = intersect(itv, sub_itv)
+    sub_itv, u, v = get_dnn_interval(X, a, b, model)
+    itv = intersect(itv, sub_itv)
     # print(u, v)
     # print(itv)
     sub_itv = [-np.inf, np.inf]
@@ -179,17 +172,9 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     itv = intersect(itv, sub_itv)
     return itv
 
-def compute_yz(X, etaj, zk):
-    sq_norm = (np.linalg.norm(etaj))**2
-
-    e1 = np.identity(X.shape[0]) - (np.dot(etaj, etaj.T))/sq_norm
-    a = np.dot(e1, X)
-
-    b = etaj/sq_norm
-
+def compute_yz(zk, a, b):
     Xz = a + b*zk
-
-    return Xz, a, b
+    return Xz
 
 def max_sum(X):
     return 0
@@ -198,33 +183,32 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
     Xz = Xz.reshape(ns + nt, Xz.shape[0] // (ns + nt))
     a = a.reshape(ns + nt, a.shape[0] // (ns + nt))
     b = b.reshape(ns + nt, b.shape[0] // (ns + nt))
-    Xz = torch.DoubleTensor(Xz)
-    Xz_hat = model.extract_feature(Xz.to(model.device)).cpu().numpy()
+    Xz_hat = model.extract_feature(torch.DoubleTensor(Xz).to(model.device)).cpu().numpy()
     Xzs_hat = Xz_hat[:ns]
     Xzt_hat = Xz_hat[ns:]
     Oz = MAD_AD(Xzs_hat, Xzt_hat, alpha)
-    itv = get_ad_interval(Xz, Xz_hat, ns, nt, Oz, a, b, model, alpha)
+    itv = get_ad_interval(Xz, Xz_hat, ns, a, b, model, alpha)
     if (itv[0] > zk):
         print(f'error{itv[0] - zk}')
     return itv[1] - min(zk, itv[1]), Oz
 
 
-def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
+def run_parametric_wdgrl(a, b, threshold, model, ns, nt, alpha):
     zk = threshold[0]
 
     list_zk = [zk]
     list_Oz = []
 
     while zk < threshold[1]:
-        Xz, a, b = compute_yz(X, etaj, zk)
+        Xz = compute_yz(zk, a, b)
         skz, Oz = parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
         list_zk.append(zk)
         list_Oz.append(Oz)
-        # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
-        # print(f'Anomaly index: {Oz}')
-        # print('-------------')
+        print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
+        print(f'Anomaly index: {Oz}')
+        print('-------------')
     return list_zk, list_Oz
         
 def cdf(mu, sigma, list_zk, list_Oz, etajTX, O, constraint):

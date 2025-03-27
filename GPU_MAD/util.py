@@ -1,6 +1,5 @@
 from mpmath import mp
 import numpy as np
-import cupy as gp
 import torch
 from typing import List
 
@@ -44,16 +43,17 @@ def solve_linear_inequality(u, v): #u + vz < 0
     v = float(v)
     if (v > -1e-16 and v < 1e-16):
         if (u <= 1e-7):
-            return [-np.Inf, np.Inf]
+            return [-np.inf, np.inf]
         else:
             print('error', u, v)
             return None
     if (v < 0):
-        return [-u/v, np.Inf]
-    return [np.NINF, -u/v]
+        return [-u/v, np.inf]
+    return [-np.inf, -u/v]
 
 def get_dnn_interval(Xtj, a, b, model):
     layers = []
+
     for name, param in model.generator.named_children():
         temp = dict(param._modules)
         
@@ -62,19 +62,20 @@ def get_dnn_interval(Xtj, a, b, model):
                 layers.append('Linear')
             elif ('ReLU' in str(layer_name)):
                 layers.append('ReLU')
+
     ptr = 0
-    itv = [np.NINF, np.Inf]
-    u = gp.asarray(a); v = gp.asarray(b)
-    temp = gp.asarray(Xtj)
-    # print(temp.device)
+    itv = [-np.inf, np.inf]
+    u = a
+    v = b
+    temp = Xtj
     weight = None
     bias = None
     for name, param in model.generator.named_parameters():
         if (layers[ptr] == 'Linear'):
             if ('weight' in name):
-                weight = gp.asarray(param.data)
+                weight = param.data.cpu().detach().numpy()
             elif ('bias' in name):
-                bias = gp.asarray(param.data.reshape(-1, 1))
+                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
                 ptr += 1
                 temp = weight.dot(temp) + bias
                 u = weight.dot(u) + bias
@@ -82,8 +83,8 @@ def get_dnn_interval(Xtj, a, b, model):
 
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
-            Relu_matrix = gp.zeros((temp.shape[0], temp.shape[0]))
-            sub_itv = [np.NINF, np.inf]
+            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
+            sub_itv = [-np.inf, np.inf]
             for i in range(temp.shape[0]):
                 if temp[i] > 0:
                     Relu_matrix[i][i] = 1
@@ -94,7 +95,7 @@ def get_dnn_interval(Xtj, a, b, model):
             temp = Relu_matrix.dot(temp)
             u = Relu_matrix.dot(u)
             v = Relu_matrix.dot(v)
-    return itv, u[:, 0].get(), v[:, 0].get()
+    return itv, u[:, 0], v[:, 0]
 
 def median(a):
     return np.argsort(a)[len(a) // 2]
@@ -115,17 +116,18 @@ def MAD_AD(Xs, Xt, alpha):
     return np.sort(O)
 
 def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
     u = np.zeros((X.shape[0], X_hat.shape[1]))
     v = np.zeros((X.shape[0], X_hat.shape[1]))
     # print(u.shape, v.shape)
     O = []
+    d = X.shape[1]
     for i in range(X_hat.shape[0]):
-        sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1), model)
+        sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, d).T, a[i].reshape(-1, d).T, b[i].reshape(-1, d).T, model)
         itv = intersect(itv, sub_itv)
     # print(u, v)
     # print(itv)
-    sub_itv = [np.NINF, np.inf]
+    sub_itv = [-np.inf, np.inf]
     for d in range(X_hat.shape[1]):
         k1 = median(X_hat[:, d])
         for i in range(X_hat.shape[0]):
@@ -177,10 +179,10 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     itv = intersect(itv, sub_itv)
     return itv
 
-def compute_yz(X, etaj, zk, n):
+def compute_yz(X, etaj, zk):
     sq_norm = (np.linalg.norm(etaj))**2
 
-    e1 = np.identity(n) - (np.dot(etaj, etaj.T))/sq_norm
+    e1 = np.identity(X.shape[0]) - (np.dot(etaj, etaj.T))/sq_norm
     a = np.dot(e1, X)
 
     b = etaj/sq_norm
@@ -193,8 +195,11 @@ def max_sum(X):
     return 0
 
 def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
-    Xz = torch.FloatTensor(Xz)
-    Xz_hat = model.extract_feature(Xz.cuda()).cpu().numpy()
+    Xz = Xz.reshape(ns + nt, Xz.shape[0] // (ns + nt))
+    a = a.reshape(ns + nt, a.shape[0] // (ns + nt))
+    b = b.reshape(ns + nt, b.shape[0] // (ns + nt))
+    Xz = torch.DoubleTensor(Xz)
+    Xz_hat = model.extract_feature(Xz.to(model.device)).cpu().numpy()
     Xzs_hat = Xz_hat[:ns]
     Xzt_hat = Xz_hat[ns:]
     Oz = MAD_AD(Xzs_hat, Xzt_hat, alpha)
@@ -205,30 +210,35 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
 
 
 def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
-    zk = -threshold
+    zk = threshold[0]
 
     list_zk = [zk]
     list_Oz = []
 
-    while zk < threshold:
-        Xz, a, b = compute_yz(X, etaj, zk, n)
+    while zk < threshold[1]:
+        Xz, a, b = compute_yz(X, etaj, zk)
         skz, Oz = parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
         list_zk.append(zk)
         list_Oz.append(Oz)
-        print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
-        print(f'Anomaly index: {Oz}')
-        print('-------------')
+        # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
+        # print(f'Anomaly index: {Oz}')
+        # print('-------------')
     return list_zk, list_Oz
         
-def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
+def cdf(mu, sigma, list_zk, list_Oz, etajTX, O, constraint):
     numerator = 0
     denominator = 0
     cnt = 0
     for each_interval in range(len(list_zk) - 1):
         al = list_zk[each_interval]
         ar = list_zk[each_interval + 1] - 1e-3
+
+        al = max(al, constraint[0])
+        ar = min(ar, constraint[1])
+        if (al > ar):
+            continue
 
         # print(f'observed O: {O}')
         # print(f'list_Oz: {list_Oz[each_interval]}')
@@ -241,6 +251,8 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
             numerator = numerator + mp.ncdf((ar - mu)/sigma) - mp.ncdf((al - mu)/sigma)
         elif (etajTX >= al) and (etajTX< ar):
             numerator = numerator + mp.ncdf((etajTX - mu)/sigma) - mp.ncdf((al - mu)/sigma)
+        # print(f'numerator: {numerator}')
+        # print(f'denominator: {denominator}')
     # print(f'numerator: {numerator}')
     # print(f'denominator: {denominator}')
     # print('cnt: ', cnt)

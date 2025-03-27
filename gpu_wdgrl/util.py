@@ -1,7 +1,9 @@
 from mpmath import mp
 import numpy as np
+# import cupy as np
 import torch
 from typing import List
+import time
 
 mp.dps = 500
 def gen_data(mu: float, delta: List[int], n: int, d: int):
@@ -24,7 +26,7 @@ def gen_data(mu: float, delta: List[int], n: int, d: int):
         if 0 in delta: 
             delta.pop(delta.index(0))
         if len(delta) != 0:
-            split_points = sorted(np.random.choice(range(1, len(idx)), len(delta) - 1, replace=False))
+            split_points = sorted(np.random.choice(range(1, len(idx)), len(delta) - 1, replace=False).tolist())
             segments = np.split(idx, split_points)
             for i, segment in enumerate(segments):
                 X[segment] = X[segment] + delta[i]
@@ -35,6 +37,7 @@ def intersect(itv1, itv2):
     # print(itv1, itv2)
     itv = [max(itv1[0], itv2[0]), min(itv1[1], itv2[1])]
     if itv[0] > itv[1]:
+        print('error', itv[1] - itv[0])
         return None    
     return itv
 
@@ -43,13 +46,13 @@ def solve_linear_inequality(u, v): #u + vz < 0
     v = float(v)
     if (v > -1e-16 and v < 1e-16):
         if (u <= 1e-7):
-            return [-np.Inf, np.Inf]
+            return [-np.inf, np.inf]
         else:
             print('error', u, v)
             return None
     if (v < 0):
-        return [-u/v, np.Inf]
-    return [np.NINF, -u/v]
+        return [-u/v, np.inf]
+    return [-np.inf, -u/v]
 
 def get_dnn_interval(X, a, b, model):
     layers = []
@@ -113,16 +116,19 @@ def MAD_AD(Xs, Xt, alpha):
         for j in range(Xt.shape[0]):
             if j not in O and ((Xt[j, i] < lower) or (Xt[j, i] > upper)):
                 O.append(j)
-    return np.sort(O)
+    return sorted(O)
 
 def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
+    u = np.zeros((X.shape[0], X_hat.shape[1]))
+    v = np.zeros((X.shape[0], X_hat.shape[1]))
     # print(u.shape, v.shape)
+    d = X.shape[1]
     sub_itv, u, v = get_dnn_interval(X, a, b, model)
-    itv = intersect(itv, sub_itv)
+    # itv = intersect(itv, sub_itv)
     # print(u, v)
     # print(itv)
-    sub_itv = [np.NINF, np.inf]
+    sub_itv = [-np.inf, np.inf]
     for d in range(X_hat.shape[1]):
         k1 = median(X_hat[:, d])
         for i in range(X_hat.shape[0]):
@@ -174,15 +180,18 @@ def get_ad_interval(X, X_hat, ns, nt, O, a, b, model, alpha):
     itv = intersect(itv, sub_itv)
     return itv
 
-def compute_yz(X, etaj, zk, n):
+def compute_yz(X, etaj, zk):
     sq_norm = (np.linalg.norm(etaj))**2
 
-    e1 = np.identity(n) - (np.dot(etaj, etaj.T))/sq_norm
+    e1 = np.identity(X.shape[0]) - (np.dot(etaj, etaj.T))/sq_norm
     a = np.dot(e1, X)
 
     b = etaj/sq_norm
 
     Xz = a + b*zk
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    Xz = np.asarray(Xz, dtype=np.float64)
 
     return Xz, a, b
 
@@ -190,7 +199,10 @@ def max_sum(X):
     return 0
 
 def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
-    Xz_hat = model.extract_feature(torch.FloatTensor(Xz).cuda()).cpu().numpy()
+    Xz = Xz.reshape(ns + nt, Xz.shape[0] // (ns + nt))
+    a = a.reshape(ns + nt, a.shape[0] // (ns + nt))
+    b = b.reshape(ns + nt, b.shape[0] // (ns + nt))
+    Xz_hat = np.asarray(model.extract_feature(torch.DoubleTensor(Xz).to(model.device)).cpu())
     Xzs_hat = Xz_hat[:ns]
     Xzt_hat = Xz_hat[ns:]
     Oz = MAD_AD(Xzs_hat, Xzt_hat, alpha)
@@ -201,30 +213,37 @@ def parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha):
 
 
 def run_parametric_wdgrl(X, etaj, n, threshold, model, ns, nt, alpha):
-    zk = -threshold
+    zk = threshold[0]
 
     list_zk = [zk]
     list_Oz = []
 
-    while zk < threshold:
-        Xz, a, b = compute_yz(X, etaj, zk, n)
+    while zk < threshold[1]:
+        start = time.time()
+        Xz, a, b = compute_yz(X, etaj, zk)
         skz, Oz = parametric_wdgrl(Xz, a, b, zk, model, ns, nt, alpha)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
         list_zk.append(zk)
         list_Oz.append(Oz)
-        # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
-        # print(f'Anomaly index: {Oz}')
-        # print('-------------')
+        print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
+        print(f'Anomaly index: {Oz}')
+        print(f'Time taken: {time.time() - start}')
+        print('-------------')
     return list_zk, list_Oz
         
-def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
+def cdf(mu, sigma, list_zk, list_Oz, etajTX, O, constraint):
     numerator = 0
     denominator = 0
     cnt = 0
     for each_interval in range(len(list_zk) - 1):
         al = list_zk[each_interval]
         ar = list_zk[each_interval + 1] - 1e-3
+
+        al = max(al, constraint[0])
+        ar = min(ar, constraint[1])
+        if (al > ar):
+            continue
 
         # print(f'observed O: {O}')
         # print(f'list_Oz: {list_Oz[each_interval]}')
@@ -237,6 +256,8 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
             numerator = numerator + mp.ncdf((ar - mu)/sigma) - mp.ncdf((al - mu)/sigma)
         elif (etajTX >= al) and (etajTX< ar):
             numerator = numerator + mp.ncdf((etajTX - mu)/sigma) - mp.ncdf((al - mu)/sigma)
+        # print(f'numerator: {numerator}')
+        # print(f'denominator: {denominator}')
     # print(f'numerator: {numerator}')
     # print(f'denominator: {denominator}')
     # print('cnt: ', cnt)

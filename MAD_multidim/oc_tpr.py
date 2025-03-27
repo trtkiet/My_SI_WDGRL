@@ -32,7 +32,7 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-    alpha = 2.5
+    alpha = 1.5
     O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
     # print(O)
     if (len(O) == 0) or (len(O) == nt):
@@ -48,7 +48,7 @@ def run_tpr(self):
             true_O.append(i)
     if len(true_O) == 0:
         return None
-    j = np.random.choice(O)
+    j = np.random.choice(true_O)
     etj = np.zeros((nt * d, 1)) 
     for i in range(d):
         etj[j * d + i] = 1
@@ -58,8 +58,8 @@ def run_tpr(self):
             etOc[i * d + k] = 1
     s = np.zeros((ns * d + nt * d, 1))
     for i in range(d):
-        testj = X[j * d + i]
-        testOc = (1/len(Oc)) * np.sum(X[Oc[k] * d + i] for k in range(len(Oc)))
+        testj = xt[j, i]
+        testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
         if np.sign(testj - testOc) == -1:
             etj[j * d + i] = -1
             for k in Oc:
@@ -68,7 +68,7 @@ def run_tpr(self):
     etajTx = etaj.T.dot(X)
     
     # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
+    print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns * d,1), mu_s), np.full((nt * d,1), mu_t)))
     sigma = np.identity(ns * d + nt * d)
     etajTmu = etaj.T.dot(mu)
@@ -77,14 +77,16 @@ def run_tpr(self):
     a = (np.identity(ns * d + nt * d) - b.dot(etaj.T)).dot(X)
     itv = [np.NINF, np.Inf]
     for i in range(d):
-        testj = a[j * d + i]
-        testOc = (1/len(Oc)) * np.sum(a[Oc[k] * d + i] for k in range(len(Oc)))
+        testj = xt[j, i]
+        testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
         if (testj - testOc) < 0:
-            itv = intersect(itv, solve_linear_inequality(a[j * d + i] - (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), b[j * d + i] - (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
+            itv = intersect(itv, solve_linear_inequality(a[j * d + i + ns * d] - (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), b[j * d + i + ns * d] - (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
         else:
-            itv = intersect(itv, solve_linear_inequality(-a[j * d + i] + (1/len(Oc))*np.sum(a[Oc[k] * d + i] for k in range(len(Oc))), -b[j * d + i] + (1/len(Oc))*np.sum(b[Oc[k] * d + i] for k in range(len(Oc)))))
+            itv = intersect(itv, solve_linear_inequality(-a[j * d + i + ns * d] + (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), -b[j * d + i + ns * d] + (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
     itv = intersect(itv, get_ad_interval(X.reshape((ns + nt, d)), x_hat, ns, nt, O, a.reshape((ns + nt, d)), b.reshape((ns + nt, d)), Model, alpha))
     # print(itv)
+    with open('results/interval.txt', 'a') as f:
+        f.write(f'{itv[0]} {itv[1]}\n')
     cdf = truncated_cdf(etajTx[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
     p_value = 0 
     if cdf is not None:
@@ -99,7 +101,7 @@ if __name__ == '__main__':
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 120
+    max_iter = 5
     alpha = 0.05
     list_tpr = []
     d = 16
@@ -124,7 +126,7 @@ if __name__ == '__main__':
     list_model = [Model for _ in range(max_iter)] 
     with open('results/tpr_oc.txt', 'w') as f:
         f.write('')
-    for delta in range(1, 5):
+    for delta in reversed(range(1, 5)):
         reject = 0
         detect = 0
         list_p_value = []

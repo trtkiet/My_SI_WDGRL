@@ -61,7 +61,8 @@ def run_fpr(self):
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     j = j + ns
     itv = get_ad_interval(X, x_hat, ns, nt, O, a, b, Model, alpha)
-    print(itv)
+    with open('results/interval.txt', 'w') as f:
+        f.write(f'{itv[0]} {itv[1]}\n')
     cdf = truncated_cdf(etajTX[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
     p_value = float(2 * min(cdf, 1 - cdf))
     print(f'p_value: {p_value}')

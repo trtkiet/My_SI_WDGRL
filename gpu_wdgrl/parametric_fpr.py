@@ -3,12 +3,15 @@ import torch
 from multiprocessing import Pool
 import os
 from model import WDGRL
-import numpy as np
+# import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import kstest
-import timeit
+import cupy as np
+import time
+
 def run_fpr(self):
-    start = timeit.default_timer()
+    np.random.seed(0)
+    start = time.time()
     _, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 16
@@ -28,23 +31,23 @@ def run_fpr(self):
     xt_hat = Model.extract_feature(xt.to(Model.device))
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
-    xs_hat = np.asarray(xs_hat.cpu())
-    xt_hat = np.asarray(xt_hat.cpu())
-    x_hat = np.asarray(x_hat.cpu())
-    xs = np.asarray(xs.cpu())
-    xt = np.asarray(xt.cpu())
-    ys = np.asarray(ys.cpu())
-    yt = np.asarray(yt.cpu())
-    alpha = 1.5
-    O = MAD_AD(xs_hat, xt_hat, alpha)
+    xs_hat = np.asarray(xs_hat)
+    xt_hat = np.asarray(xt_hat)
+    x_hat = np.asarray(x_hat)
+    xs = np.asarray(xs)
+    xt = np.asarray(xt)
+    ys = np.asarray(ys)
+    yt = np.asarray(yt)
+    alpha = 4.5
+    O = MAD_AD(np.asarray(xs), np.asarray(xt), alpha)
     # print(len(O))
     if (len(O) == 0) or (len(O) == nt):
-        return None, None
+        return None
     yt_hat = np.zeros_like(yt)
     yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
     X = np.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
-    j = np.random.choice(O)
+    j = np.random.choice(O, 1)
     etj = np.zeros((nt * d, 1)) 
     for i in range(d):
         etj[j * d + i] = 1
@@ -55,8 +58,8 @@ def run_fpr(self):
     s = np.zeros((ns * d + nt * d, 1))
     for i in range(d):
         testj = xt[j, i]
-        testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
-        if np.sign(testj - testOc) == -1:
+        testOc = (1/len(Oc)) * sum(xt[Oc[k], i] for k in range(len(Oc)))
+        if (testj - testOc) < 0:
             etj[j * d + i] = -1
             for k in Oc:
                 etOc[k * d + i] = -1
@@ -66,7 +69,7 @@ def run_fpr(self):
     print(f'Anomaly indexes: {O}')
     print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns * d,1), mu_s), np.full((nt * d,1), mu_t)))
-    sigma = np.identity(ns * d + nt * d)
+    sigma = np.identity(ns * d + nt * d, )
     etajTmu = etaj.T.dot(mu)
     etajTsigmaetaj = etaj.T.dot(sigma).dot(etaj)
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
@@ -74,30 +77,26 @@ def run_fpr(self):
     itv = [-np.inf, np.inf]
     for i in range(d):
         testj = xt[j, i]
-        testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
+        testOc = (1/len(Oc)) * sum(xt[Oc[k], i] for k in range(len(Oc)))
         if (testj - testOc) < 0:
-            itv = intersect(itv, solve_linear_inequality(a[j * d + i + ns * d] - (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), b[j * d + i + ns * d] - (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
+            itv = intersect(itv, solve_linear_inequality(a[j * d + i + ns * d] - (1/len(Oc))*sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), b[j * d + i + ns * d] - (1/len(Oc))*sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
         else:
-            itv = intersect(itv, solve_linear_inequality(-a[j * d + i + ns * d] + (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), -b[j * d + i + ns * d] + (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
+            itv = intersect(itv, solve_linear_inequality(-a[j * d + i + ns * d] + (1/len(Oc))*sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), -b[j * d + i + ns * d] + (1/len(Oc))*sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
     threshold = 20 * np.sqrt(etajTsigmaetaj[0][0])
     threshold = [-threshold, threshold]
     threshold[0] = max(threshold[0], itv[0])
     threshold[1] = min(threshold[1], itv[1])
     # print(itv)
     # print(etajTsigmaetaj)
-    list_zk, list_Oz = run_parametric_wdgrl(a, b, threshold, Model, ns, nt, alpha)
+    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O, itv)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
-    stop = timeit.default_timer()
-    print(f'Execution time: {stop - start}')
-    return p_value, stop - start
+    print(f'Time taken: {time.time() - start}')
+    return p_value
+
 
 if __name__ == '__main__':
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["NUMEXPR_NUM_THREADS"] = "1"
-    os.environ["OMP_NUM_THREADS"] = "1"
-
     d = 16
     generator_hidden_dims = [32, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 32, 16, 8, 4]
     critic_hidden_dims = [64, 64, 64, 64, 64, 32, 16, 8 , 4, 2, 1]
@@ -117,31 +116,4 @@ if __name__ == '__main__':
     Model.generator.load_state_dict(check_point['generator_state_dict'])
     Model.critic.load_state_dict(check_point['critic_state_dict'])
     Model.generator = Model.generator.cpu()
-
-    max_iter = 120
-    alpha = 0.05
-    list_model = [Model for i in range(max_iter)]
-    reject = 0
-    detect = 0
-    list_p_value = []
-    pool = Pool(initializer=np.random.seed)
-    list_result = pool.map(run_fpr, zip(range(max_iter), list_model))
-    pool.close()
-    pool.join()
-    sum_time = 0
-    for p_value, time in list_result:
-        if p_value is not None:
-            detect += 1
-            sum_time += time
-            list_p_value.append(p_value)
-
-            if (p_value < alpha):
-                reject += 1
-    with open(f"results/fpr_parametric.txt", "w") as f:
-        f.write(str(reject/detect) + '\n')
-        f.write(str(kstest(list_p_value, 'uniform')) + '\n')
-        f.write(f'avg time: {sum_time/detect}')
-    plt.hist(list_p_value)
-    plt.savefig(f'results/fpr_parametric.png')
-    plt.close()
-
+    run_fpr((d, Model))

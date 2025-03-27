@@ -4,8 +4,10 @@ from multiprocessing import Pool
 import os
 from model import WDGRL
 import numpy as np
+import time
 
 def run_tpr(self):
+    start = time.time()
     _, delta, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 16
@@ -25,30 +27,29 @@ def run_tpr(self):
     xt_hat = Model.extract_feature(xt.to(Model.device))
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
 
-    xs_hat = xs_hat.cpu()
-    xt_hat = xt_hat.cpu()
-    x_hat = x_hat.cpu()
-    xs = xs.cpu()
-    xt = xt.cpu()
-    ys = ys.cpu()
-    yt = yt.cpu()
-    alpha = 2.5
-    O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
+    xs_hat = np.asarray(xs_hat.cpu())
+    xt_hat = np.asarray(xt_hat.cpu())
+    x_hat = np.asarray(x_hat.cpu())
+    xs = np.asarray(xs.cpu())
+    xt = np.asarray(xt.cpu())
+    ys = np.asarray(ys.cpu())
+    yt = np.asarray(yt.cpu())
+    alpha = 1.5
+    O = MAD_AD(xs_hat, xt_hat, alpha)
     # print(len(O))
     if (len(O) == 0) or (len(O) == nt):
-        return None
-    yt_hat = torch.zeros_like(yt)
+        return None, None
+    yt_hat = np.zeros_like(yt)
     yt_hat[O] = 1
-    Oc = list(np.where(yt_hat == 0)[0])
-    X = np.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
-    X = torch.DoubleTensor(X)
     true_O = []
     for i in O:
         if yt[i] == 1:
             true_O.append(i)
     if len(true_O) == 0:
-        return None
+        return None, None
     j = np.random.choice(true_O)
+    Oc = list(np.where(yt_hat == 0)[0])
+    X = np.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
     etj = np.zeros((nt * d, 1)) 
     for i in range(d):
         etj[j * d + i] = 1
@@ -89,18 +90,20 @@ def run_tpr(self):
     threshold[1] = min(threshold[1], itv[1])
     # print(itv)
     # print(etajTsigmaetaj)
-    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
+    list_zk, list_Oz = run_parametric_wdgrl(a, b, threshold, Model, ns, nt, alpha)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O, itv)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
-    return p_value
+    stop = time.time()
+    print(f'Execution time: {stop - start}')
+    return p_value, stop - start
 
 if __name__ == '__main__':
     os.environ["MKL_NUM_THREADS"] = "1"
     os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["OMP_NUM_THREADS"] = "1"
 
-    max_iter = 10
+    max_iter = 120
     alpha = 0.05
     list_tpr = []
     d = 16

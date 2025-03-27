@@ -1,12 +1,9 @@
-delta: 1
-tpr:0.046296296296296294
-reject: 5, detect: 108
-delta: 2
-tpr:0.041666666666666664
-reject: 5, detect: 120
-delta: 3
-tpr:0.075
-reject: 9, detect: 120
 delta: 4
-tpr:0.05
-reject: 6, detect: 120
+tpr:0.2
+reject: 1, detect: 5
+delta: 3
+tpr:0.0
+reject: 0, detect: 5
+delta: 2
+tpr:0.2
+reject: 1, detect: 5

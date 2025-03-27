@@ -1,2 +1,3 @@
-0.045
-KstestResult(statistic=np.float64(0.011529995100620583), pvalue=np.float64(0.9991850074333753), statistic_location=np.float64(0.2885299951006206), statistic_sign=np.int8(-1))
+0.0
+KstestResult(statistic=0.7753556796292502, pvalue=0.44928864074149955, statistic_location=0.7753556796292502, statistic_sign=-1)
+avg time: 104.67900560000271

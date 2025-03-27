@@ -52,7 +52,7 @@ def solve_linear_inequality(u, v): #u + vz < 0
         return [-u/v, np.Inf]
     return [np.NINF, -u/v]
 
-def get_dnn_interval(Xtj, a, b, model):
+def get_dnn_interval(X, a, b, model):
     layers = []
 
     for name, param in model.named_children():
@@ -65,38 +65,38 @@ def get_dnn_interval(Xtj, a, b, model):
                 layers.append('ReLU')
 
     ptr = 0
-    itv = [np.NINF, np.Inf]
+    itv = [-np.inf, np.inf]
     u = a
     v = b
-    temp = Xtj
+    temp = X
     weight = None
     bias = None
     for name, param in model.named_parameters():
         if (layers[ptr] == 'Linear'):
             if ('weight' in name):
-                weight = param.data.cpu().detach().numpy()
+                weight = np.asarray(param.data.cpu())
             elif ('bias' in name):
-                bias = param.data.cpu().detach().numpy().reshape(-1, 1)
+                bias = np.asarray(param.data.cpu()).reshape(-1, 1)
+                bias = bias.dot(np.ones((1, X.shape[0]))).T
                 ptr += 1
-                temp = weight.dot(temp) + bias
-                u = weight.dot(u) + bias
-                v = weight.dot(v)
+                temp = temp.dot(weight.T) + bias
+                u = u.dot(weight.T) + bias
+                v = v.dot(weight.T)
 
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
-            Relu_matrix = np.zeros((temp.shape[0], temp.shape[0]))
-            sub_itv = [np.NINF, np.inf]
+            sub_itv = [-np.inf, np.inf]
             for i in range(temp.shape[0]):
-                if temp[i] > 0:
-                    Relu_matrix[i][i] = 1
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(-u[i], -v[i]))
-                else:
-                    sub_itv = intersect(sub_itv, solve_linear_inequality(u[i], v[i]))
+                for j in range(temp.shape[1]):
+                    if temp[i][j] > 0:
+                        sub_itv = intersect(sub_itv, solve_linear_inequality(-u[i][j], -v[i][j]))
+                    else:
+                        sub_itv = intersect(sub_itv, solve_linear_inequality(u[i][j], v[i][j]))
+                        temp[i][j] = 0
+                        u[i][j] = 0
+                        v[i][j] = 0
             itv = intersect(itv, sub_itv)
-            temp = Relu_matrix.dot(temp)
-            u = Relu_matrix.dot(u)
-            v = Relu_matrix.dot(v)
-    return itv, u[:, 0], v[:, 0]
+    return itv, u, v
 
 def get_alpha_percent_greatest(X, alpha):
     return np.argsort(X)[-int(alpha*len(X))]
@@ -113,25 +113,18 @@ def AE_AD(Xs, Xt, ae, alpha):
 def get_ad_interval(X, X_hat, X_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha):
     itv = [np.NINF, np.Inf]
     itv = [np.NINF, np.Inf]
-    u = np.zeros((X.shape[0], X_hat.shape[1]))
-    v = np.zeros((X.shape[0], X_hat.shape[1]))
-    p = np.zeros((X.shape[0], X_hat.shape[1]))
-    q = np.zeros((X.shape[0], X_hat.shape[1]))
-    s = np.zeros((X.shape[0], X_hat.shape[1]))
-    O = []
-    for i in range(X_hat.shape[0]):
-        sub_itv, u[i], v[i] = get_dnn_interval(X[i].reshape(-1, 1), a[i].reshape(-1, 1), b[i].reshape(-1, 1), wdgrl.generator)
-        itv = intersect(itv, sub_itv)
-    for i in range(X_hat.shape[0]):
-        sub_itv, p[i], q[i] = get_dnn_interval(X_hat[i].reshape(-1, 1), u[i].reshape(-1, 1), v[i].reshape(-1, 1), ae)
-        itv = intersect(itv, sub_itv)
+    sub_itv, u, v = get_dnn_interval(X, a, b, wdgrl.generator)
+    itv = intersect(itv, sub_itv)
+    sub_itv, p, q= get_dnn_interval(X_hat, u, v, ae)
+    itv = intersect(itv, sub_itv)
+    s = np.zeros((X_hat.shape[0], X_hat.shape[1]))
     for i in range(X_hat.shape[0]):
         for d in range(X_hat.shape[1]):
             if X_tilde[i, d] < X_hat[i, d]:
                 itv = intersect(itv, solve_linear_inequality(p[i, d] - u[i, d], q[i, d] - v[i, d]))
             else:
                 itv = intersect(itv, solve_linear_inequality(u[i, d] - p[i, d], v[i, d] - q[i, d]))
-            s[i, d] = np.sign(X_tilde[i, d].cpu() - X_hat[i, d].cpu())
+            s[i, d] = np.sign(X_tilde[i, d] - X_hat[i, d])
     
     
     pivot = get_alpha_percent_greatest(reconstruction_loss, alpha)
@@ -164,12 +157,11 @@ def max_sum(X):
     return 0
 
 def parametric_si(Xz, a, b, zk, wdgrl, ae, alpha, ns):
-    Xz = torch.FloatTensor(Xz).cpu()
-    Xz_hat = wdgrl.extract_feature(Xz.to(wdgrl.device)).cpu()
-    Xz_tilde = ae.forward(Xz_hat.to(ae.device)).cpu()
-    reconstruction_loss = ae.reconstruction_loss(Xz_hat.to(ae.device))
+    Xz_hat = wdgrl.extract_feature(torch.FloatTensor(Xz).to(wdgrl.device)).cpu().numpy()
+    Xz_tilde = ae.forward(torch.FloatTensor(Xz_hat).to(ae.device)).cpu()
+    reconstruction_loss = ae.reconstruction_loss(torch.FloatTensor(Xz_hat).to(ae.device))
     reconstruction_loss = [i.item() for i in reconstruction_loss]
-    Oz = AE_AD(Xz_hat[:ns], Xz_hat[ns:], ae, alpha)
+    Oz = AE_AD(torch.FloatTensor(Xz_hat[:ns]), torch.FloatTensor(Xz_hat[ns:]), ae, alpha)
     itv = get_ad_interval(Xz, Xz_hat, Xz_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha)
     return itv[1] - min(zk, itv[1]), Oz
 

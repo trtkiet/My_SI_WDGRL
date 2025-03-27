@@ -8,7 +8,7 @@ import numpy as np
 def run_tpr(self):
     _, delta, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
-    ns, nt, d = 150, 75, 1
+    ns, nt, d = 150, 25, 1
     mu_s, mu_t = 0, 2
     delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
@@ -32,7 +32,7 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-    alpha = 2.5
+    alpha = 1.5
     O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
     # print(len(O))
     if (len(O) == 0) or (len(O) == nt):

@@ -8,7 +8,7 @@ import numpy as np
 def run_tpr(self):
     _, delta, Model = self
     # Create a new instance of the WDGRL model (same architecture as before)
-    ns, nt, d = 150, 75, 1
+    ns, nt, d = 150, 25, 1
     mu_s, mu_t = 0, 2
     delta_s, delta_t = [0, 1, 2, 3, 4], [delta]
     xs, ys = gen_data(mu_s, delta_s, ns, d)
@@ -32,7 +32,7 @@ def run_tpr(self):
     xt = xt.cpu()
     ys = ys.cpu()
     yt = yt.cpu()
-    alpha = 2.5
+    alpha = 1.5
     O = MAD_AD(xs_hat.numpy(), xt_hat.numpy(), alpha)
     print(len(O))
     if (len(O) == 0) or (len(O) == nt):
@@ -60,7 +60,7 @@ def run_tpr(self):
     etajTx = etaj.T.dot(X)
     
     # print(f'Anomaly indexes: {O}')
-    # print(f'etajTX: {etajTx}')
+    print(f'etajTX: {etajTx}')
     mu = np.vstack((np.full((ns,1), mu_s), np.full((nt,1), mu_t)))
     sigma = np.identity(ns+nt)
     etajTmu = etaj.T.dot(mu)
@@ -68,7 +68,7 @@ def run_tpr(self):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns+nt) - b.dot(etaj.T)).dot(X)
     threshold = 20
-    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha, O)
+    list_zk, list_Oz = run_parametric_wdgrl(X, etaj, ns+nt, threshold, Model, ns, nt, alpha)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
     print(f'p-value: {p_value}')
