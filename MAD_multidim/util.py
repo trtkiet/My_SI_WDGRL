@@ -78,6 +78,8 @@ def get_dnn_interval(X, a, b, model):
                 X = X.dot(weight.T) + bias
                 a = a.dot(weight.T) + bias
                 b = b.dot(weight.T)
+                with open('results/bz.txt', 'a') as f:
+                    f.write(f'{b}\n')
 
         if (ptr < len(layers) and layers[ptr] == 'ReLU'):
             ptr += 1
@@ -86,12 +88,18 @@ def get_dnn_interval(X, a, b, model):
                 for j in range(X.shape[1]):
                     if X[i][j] > 0:
                         sub_itv = intersect(sub_itv, solve_linear_inequality(-a[i][j], -b[i][j]))
+                        # with open('results/interval.txt', 'a') as f:
+                        #     f.write(f'{solve_linear_inequality(-a[i][j], -b[i][j])}\n')
                     else:
                         sub_itv = intersect(sub_itv, solve_linear_inequality(a[i][j], b[i][j]))
+                        # with open('results/interval.txt', 'a') as f:
+                        #     f.write(f'{solve_linear_inequality(a[i][j], b[i][j])}\n')
                         X[i][j] = 0
                         a[i][j] = 0
                         b[i][j] = 0
             itv = intersect(itv, sub_itv)
+            with open('results/bz.txt', 'a') as f:
+                    f.write(f'{b}\n')
     return itv, a, b
 
 def median(a):
@@ -167,8 +175,8 @@ def get_ad_interval(X, X_hat, ns, a, b, model, alpha):
                     (u[j, d] - u[k1, d] - alpha * sk2 * (u[k2, d] - u[k1, d])),
                     (v[j, d] - v[k1, d] - alpha * sk2 * (v[k2, d] - v[k1, d]))
                 ))
-    # print(f'mad itv: {sub_itv}')
-    # print(f'dnn itv: {itv}')
+    print(f'mad itv: {sub_itv}')
+    print(f'dnn itv: {itv}')
     itv = intersect(itv, sub_itv)
     return itv
 

@@ -41,7 +41,7 @@ def run_tpr(self):
     yt_hat[O] = 1
     Oc = list(np.where(yt_hat == 0)[0])
     X = np.vstack((xs.flatten().reshape((ns * d, 1)), xt.flatten().reshape((nt * d, 1))))
-    X = torch.DoubleTensor(X)
+    # X = torch.DoubleTensor(X)
     true_O = []
     for i in O:
         if yt[i] == 1:
@@ -68,7 +68,7 @@ def run_tpr(self):
     etajTx = etaj.T.dot(X)
     
     # print(f'Anomaly indexes: {O}')
-    print(f'etajTX: {etajTx}')
+    
     mu = np.vstack((np.full((ns * d,1), mu_s), np.full((nt * d,1), mu_t)))
     sigma = np.identity(ns * d + nt * d)
     etajTmu = etaj.T.dot(mu)
@@ -76,6 +76,7 @@ def run_tpr(self):
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns * d + nt * d) - b.dot(etaj.T)).dot(X)
     itv = [np.NINF, np.Inf]
+    
     for i in range(d):
         testj = xt[j, i]
         testOc = (1/len(Oc)) * np.sum(xt[Oc[k], i] for k in range(len(Oc)))
@@ -83,16 +84,18 @@ def run_tpr(self):
             itv = intersect(itv, solve_linear_inequality(a[j * d + i + ns * d] - (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), b[j * d + i + ns * d] - (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
         else:
             itv = intersect(itv, solve_linear_inequality(-a[j * d + i + ns * d] + (1/len(Oc))*np.sum(a[Oc[k] * d + i + ns * d] for k in range(len(Oc))), -b[j * d + i + ns * d] + (1/len(Oc))*np.sum(b[Oc[k] * d + i + ns * d] for k in range(len(Oc)))))
-    itv = intersect(itv, get_ad_interval(X.reshape((ns + nt, d)), x_hat, ns, nt, O, a.reshape((ns + nt, d)), b.reshape((ns + nt, d)), Model, alpha))
-    # print(itv)
-    with open('results/interval.txt', 'a') as f:
-        f.write(f'{itv[0]} {itv[1]}\n')
+    itv = intersect(itv, get_ad_interval(X.reshape((ns + nt, d)), x_hat.reshape(ns + nt, -1), ns, a.reshape((ns + nt, d)), b.reshape((ns + nt, d)), Model, alpha))
+    
+    # with open('results/interval.txt', 'a') as f:
+    #     f.write(f'{itv[0]} {itv[1]}\n')
     cdf = truncated_cdf(etajTx[0][0], etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), itv[0], itv[1])
     p_value = 0 
     if cdf is not None:
         p_value = float(2 * min(cdf, 1 - cdf))
     else:
         return None
+    print(f'etajTX: {etajTx}')
+    print(itv)
     print(f'p_value: {p_value}')
     return p_value
 
@@ -126,11 +129,11 @@ if __name__ == '__main__':
     list_model = [Model for _ in range(max_iter)] 
     with open('results/tpr_oc.txt', 'w') as f:
         f.write('')
-    for delta in reversed(range(1, 5)):
+    for delta in reversed(range(4, 5)):
         reject = 0
         detect = 0
         list_p_value = []
-        pool = Pool(initializer=np.random.seed)
+        pool = Pool(initializer=np.random.seed, processes=1)
         list_result = pool.map(run_tpr, zip(range(max_iter),[delta]*max_iter, list_model))
         pool.close()
         pool.join()

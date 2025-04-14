@@ -71,6 +71,7 @@ def get_dnn_interval(X, a, b, model):
     temp = X
     weight = None
     bias = None
+    cnt = 0
     for name, param in model.named_parameters():
         if (layers[ptr] == 'Linear'):
             if ('weight' in name):
@@ -96,6 +97,8 @@ def get_dnn_interval(X, a, b, model):
                         u[i][j] = 0
                         v[i][j] = 0
             itv = intersect(itv, sub_itv)
+    # with open('count.txt', 'a') as f:
+    #     f.write(f'{cnt}\n')
     return itv, u, v
 
 def get_alpha_percent_greatest(X, alpha):
@@ -175,9 +178,9 @@ def run_parametric_si(a, b, threshold, wdgrl, ae, alpha, ns, nt):
         # zk = min(zk, threshold)
         list_zk.append(zk)
         list_Oz.append(Oz)
-        print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
-        print(f'Anomaly index: {Oz}')
-        print('-------------')
+        # print(f'intervals: {zk-skz-1e-3} - {zk -1e-3}')
+        # print(f'Anomaly index: {Oz}')
+        # print('-------------')
     return list_zk, list_Oz
         
 def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
@@ -205,8 +208,7 @@ def cdf(mu, sigma, list_zk, list_Oz, etajTX, O):
 def truncated_cdf(etajTy, mu, sigma, left, right):
     numerator = mp.ncdf((etajTy - mu) / sigma) - mp.ncdf((left - mu) / sigma)
     denominator = mp.ncdf((right - mu) / sigma) - mp.ncdf((left - mu) / sigma)
-    # print(f'numerator: {numerator}')
-    # print(f'denominator: {denominator}')
+    # print(numerator/denominator)
     if denominator != 0:
         return float(numerator/denominator)
     else:

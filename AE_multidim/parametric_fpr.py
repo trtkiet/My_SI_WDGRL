@@ -11,6 +11,7 @@ import time
 def run_fpr(self):
     _, wdgrl, ae = self
     start = time.time()
+    print(f'Starting iteration #{_}')
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 32
     mu_s, mu_t = 0, 2
@@ -75,6 +76,7 @@ def run_fpr(self):
     sigma = np.identity(ns * d + nt * d)
     etajTmu = etaj.T.dot(mu)
     etajTsigmaetaj = etaj.T.dot(sigma).dot(etaj)
+    # print(np.sqrt(etajTsigmaetaj[0][0]))
     b = sigma.dot(etaj).dot(np.linalg.inv(etajTsigmaetaj))
     a = (np.identity(ns * d + nt * d) - b.dot(etaj.T)).dot(X)
     itv = [-np.inf, np.inf]
@@ -94,9 +96,10 @@ def run_fpr(self):
     list_zk, list_Oz = run_parametric_si(a, b, threshold, wdgrl, ae, alpha, ns, nt)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
-    print(f'p-value: {p_value}')
+    print(f'Ending iteration #{_}')
+    print(f'+ p-value: {p_value}')
     stop = time.time()
-    print(f'Execution time: {stop - start}')
+    print(f'+ Execution time: {stop - start}')
     return p_value, stop - start
 
 if __name__ == '__main__':
@@ -105,8 +108,8 @@ if __name__ == '__main__':
     os.environ["OMP_NUM_THREADS"] = "1"
 
     d = 32
-    generator_hidden_dims = [64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 32, 16]
-    critic_hidden_dims = [32, 64, 64, 64, 64, 64, 32, 16, 8, 4, 2, 1]
+    generator_hidden_dims = [500, 100, 20]
+    critic_hidden_dims = [100]
     wdgrl = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
     index = None
     with open("model/wdgrl_models.txt", "r") as f:
@@ -125,8 +128,8 @@ if __name__ == '__main__':
     wdgrl.generator = wdgrl.generator.cpu()
 
     input_dim = generator_hidden_dims[-1]
-    encoder_hidden_dims = [16, 16, 16, 16, 16, 8, 4]
-    decoder_hidden_dims = [8, 16, 16, 16, 16, 16]
+    encoder_hidden_dims = [16, 8, 4, 2]
+    decoder_hidden_dims = [4, 8, 16, input_dim]
     ae = AutoEncoder(input_dim=input_dim, encoder_hidden_dims=encoder_hidden_dims, decoder_hidden_dims=decoder_hidden_dims)
     index = None
     with open("model/ae_models.txt", "r") as f:
