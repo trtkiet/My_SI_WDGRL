@@ -1,2 +1,0 @@
-0.045
-KstestResult(statistic=np.float64(0.011529995100620583), pvalue=np.float64(0.9991850074333753), statistic_location=np.float64(0.2885299951006206), statistic_sign=np.int8(-1))

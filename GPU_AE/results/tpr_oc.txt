@@ -1,0 +1,16 @@
+delta: 4
+tpr:0.675
+reject: 81, detect: 120
+average runtime: 3.344788537422816
+delta: 3
+tpr:0.5583333333333333
+reject: 67, detect: 120
+average runtime: 3.271733345588048
+delta: 2
+tpr:0.38333333333333336
+reject: 46, detect: 120
+average runtime: 3.398791140317917
+delta: 1
+tpr:0.11666666666666667
+reject: 14, detect: 120
+average runtime: 3.3328619599342346

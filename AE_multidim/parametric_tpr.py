@@ -16,18 +16,18 @@ def run_tpr(self):
     xs, ys = gen_data(mu_s, delta_s, ns, d)
     xt, yt = gen_data(mu_t, delta_t, nt, d)
 
-    wdgrl.generator = wdgrl.generator.cuda().double()
-    ae.net = ae.net.cuda().double()
-    # wdgrl.generator = wdgrl.generator.double()
-    # ae.net = ae.net.double()
+    # wdgrl.generator = wdgrl.generator.cuda().double()
+    # ae.net = ae.net.cuda().double()
+    wdgrl.generator = wdgrl.generator.double()
+    ae.net = ae.net.double()
 
     xs = torch.DoubleTensor(xs)
     ys = torch.LongTensor(ys)
     xt = torch.DoubleTensor(xt)
     yt = torch.LongTensor(yt)
 
-    xs_hat = wdgrl.extract_feature(xs.cuda())
-    xt_hat = wdgrl.extract_feature(xt.cuda())
+    xs_hat = wdgrl.extract_feature(xs.to(wdgrl.device))
+    xt_hat = wdgrl.extract_feature(xt.to(wdgrl.device))
     x_hat = torch.cat([xs_hat, xt_hat], dim=0)
     x_tilde = ae.forward(x_hat.to(ae.device))
 

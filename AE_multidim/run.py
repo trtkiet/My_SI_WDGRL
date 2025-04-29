@@ -1,18 +1,11 @@
 from util import *
-import torch
-from multiprocessing import Pool
-import os
-from model import WDGRL, AutoEncoder
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import kstest
 import time
-
-def run_fpr(self):
-    np.random.seed(1)
-    _, wdgrl, ae = self
+from model import WDGRL, AutoEncoder
+def run(self):
+    seed, wdgrl, ae, np_wdgrl, np_ae = self
+    np.random.seed(seed)
     start = time.time()
-    print(f'Starting iteration #{_}')
+    print(f'Starting iteration #{seed}')
     # Create a new instance of the WDGRL model (same architecture as before)
     ns, nt, d = 150, 25, 32
     mu_s, mu_t = 0, 2
@@ -94,26 +87,24 @@ def run_fpr(self):
     threshold[1] = min(threshold[1], itv[1])
     # print(itv)
     # print(etajTsigmaetaj)
-    list_zk, list_Oz = run_parametric_si(a, b, threshold, wdgrl, ae, alpha, ns, nt)
+    list_zk, list_Oz = run_parametric_si(a.reshape((-1, d)), b.reshape((-1, d)), threshold, wdgrl, ae, np_wdgrl, np_ae, alpha, ns, nt)
     CDF = cdf(etajTmu[0][0], np.sqrt(etajTsigmaetaj[0][0]), list_zk, list_Oz, etajTx[0][0], O)
     p_value = 2 * min(CDF, 1 - CDF)
-    print(f'Ending iteration #{_}')
+    print(f'Ending iteration #{seed}')
     print(f'+ p-value: {p_value}')
     stop = time.time()
     print(f'+ Execution time: {stop - start}')
     return p_value, stop - start
-
+    
 if __name__ == '__main__':
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["NUMEXPR_NUM_THREADS"] = "1"
-    os.environ["OMP_NUM_THREADS"] = "1"
-
+    # warnings.filterwarnings('ignore')
     d = 32
     generator_hidden_dims = [500, 100, 20]
     critic_hidden_dims = [100]
     wdgrl = WDGRL(input_dim=d, generator_hidden_dims=generator_hidden_dims, critic_hidden_dims=critic_hidden_dims)
     index = None
-    with open("model/wdgrl_models.txt", "r") as f:
+    with open("/kaggle/input/mydata/model/wdgrl_models.txt", "r") as f:
+    # with open("model/wdgrl_models.txt", "r") as f:
         lines = f.readlines()
         for i, line in enumerate(lines):
             words = line[:-1].split("/")
@@ -123,7 +114,8 @@ if __name__ == '__main__':
     if index is None:
         print("Model not found")
         exit()
-    check_point = torch.load(f"model/wdgrl_{index}.pth", map_location=wdgrl.device, weights_only=True)
+    check_point = torch.load(f"/kaggle/input/mydata/model/wdgrl_{index}.pth", map_location=wdgrl.device, weights_only=True)
+    # check_point = torch.load(f"model/wdgrl_{index}.pth", map_location=wdgrl.device, weights_only=True)
     wdgrl.generator.load_state_dict(check_point['generator_state_dict'])
     wdgrl.critic.load_state_dict(check_point['critic_state_dict'])
     wdgrl.generator = wdgrl.generator.cpu()
@@ -133,7 +125,8 @@ if __name__ == '__main__':
     decoder_hidden_dims = [4, 8, 16, input_dim]
     ae = AutoEncoder(input_dim=input_dim, encoder_hidden_dims=encoder_hidden_dims, decoder_hidden_dims=decoder_hidden_dims)
     index = None
-    with open("model/ae_models.txt", "r") as f:
+    with open("/kaggle/input/mydata/model/ae_models.txt", "r") as f:
+    # with open("model/ae_models.txt", "r") as f:
         lines = f.readlines()
         for i, line in enumerate(lines):
             words = line[:-1].split("/")
@@ -143,49 +136,24 @@ if __name__ == '__main__':
     if index is None:
         print("Model not found")
         exit()
-    check_point = torch.load(f"model/ae_{index}.pth", map_location=ae.device, weights_only=True)
+    check_point = torch.load(f"/kaggle/input/mydata/model/ae_{index}.pth", map_location=ae.device, weights_only=True)
+    # check_point = torch.load(f"model/ae_{index}.pth", map_location=ae.device, weights_only=True)
     ae.load_state_dict(check_point['state_dict'])
     ae.net = ae.net.cpu()
-
-    # max_iter = 120
-    # alpha = 0.05
-    # list_wdgrl = [wdgrl for i in range(max_iter)]
-    # list_ae = [ae for i in range(max_iter)]
-    # reject = 0
-    # detect = 0
-    # list_p_value = []
-    # pool = Pool(initializer=np.random.seed)
-    # list_result = pool.map(run_fpr, zip(range(max_iter), list_wdgrl, list_ae))
-    # pool.close()
-    # pool.join()
-    # total_time = 0
-    # for p_value, runtime in list_result:
-    #     if p_value is not None:
-    #         detect += 1
-    #         total_time += runtime
-    #         list_p_value.append(p_value)
-
-    #         if (p_value < alpha):
-    #             reject += 1
-    # with open(f"results/fpr_parametric.txt", "w") as f:
-    #     f.write(str(reject/detect) + '\n')
-    #     f.write(str(kstest(list_p_value, 'uniform')) + '\n')
-    #     f.write(str(total_time) + '\n')
-    # plt.hist(list_p_value)
-    # plt.savefig(f'results/fpr_parametric.png')
-    # plt.close()
-    with open("result/p_values.txt", "w") as f:
+    with open("/kaggle/working/result/p_values.txt", "w") as f:
+    # with open("result/p_values.txt", "w") as f:
         f.write("")
-    with open("result/execution_times.txt", "w") as f:
-    # with open("/kaggle/working/result/execution_times.txt", "w") as f:
+    # with open("result/execution_times.txt", "w") as f:
+    with open("/kaggle/working/result/execution_times.txt", "w") as f:
         f.write("")
     for i in range(20): 
-        p_value, execution_time = run_fpr((i, wdgrl, ae))
+        p_value, execution_time = run((i, wdgrl, ae, convert_network_to_numpy(wdgrl.generator), convert_network_to_numpy(ae)))
         if p_value is None:
             continue
-        # with open("/kaggle/working/result/p_values.txt", "a") as f:
-        with open("result/p_values.txt", "a") as f:
+        with open("/kaggle/working/result/p_values.txt", "a") as f:
+        # with open("result/p_values.txt", "a") as f:
             f.write(f"{p_value}\n")
-        # with open("/kaggle/working/result/execution_times.txt", "a") as f:
-        with open("result/execution_times.txt", "a") as f:
+        with open("/kaggle/working/result/execution_times.txt", "a") as f:
+        # with open("result/execution_times.txt", "a") as f:
             f.write(f"{execution_time}\n")
+        

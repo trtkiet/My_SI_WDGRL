@@ -2,6 +2,10 @@ from mpmath import mp
 import numpy as np
 import torch
 from typing import List
+from layers import *
+from operations import *
+import math
+import time
 
 mp.dps = 500
 def gen_data(mu: float, delta: List[int], n: int, d: int):
@@ -52,59 +56,24 @@ def solve_linear_inequality(u, v): #u + vz < 0
         return [-u/v, np.inf]
     return [-np.inf, -u/v]
 
-def get_dnn_interval(X, a, b, model):
-    layers = []
 
-    for name, param in model.named_children():
-        temp = dict(param._modules)
-        
-        for layer_name in temp.values():
-            if ('Linear' in str(layer_name)):
-                layers.append('Linear')
-            elif ('ReLU' in str(layer_name)):
-                layers.append('ReLU')
-
-    ptr = 0
-    itv = [-np.inf, np.inf]
-    u = a
-    v = b
-    temp = X
-    weight = None
-    bias = None
-    cnt = 0
-    for name, param in model.named_parameters():
-        if (layers[ptr] == 'Linear'):
-            if ('weight' in name):
-                weight = np.asarray(param.data.cpu())
-            elif ('bias' in name):
-                bias = np.asarray(param.data.cpu()).reshape(-1, 1)
-                bias = bias.dot(np.ones((1, X.shape[0]))).T
-                ptr += 1
-                # print(temp.dot(weight.T))
-                temp = temp.dot(weight.T) + bias
-                # print(temp)
-                u = u.dot(weight.T) + bias
-                v = v.dot(weight.T)
-
-        if (ptr < len(layers) and layers[ptr] == 'ReLU'):
-            ptr += 1
-            sub_itv = [-np.inf, np.inf]
-            for i in range(temp.shape[0]):
-                for j in range(temp.shape[1]):
-                    if temp[i][j] > 0:
-                        itv = intersect(itv, solve_linear_inequality(-u[i][j], -v[i][j]))
-                    else:
-                        itv = intersect(itv, solve_linear_inequality(u[i][j], v[i][j]))
-                        temp[i][j] = 0
-                        u[i][j] = 0
-                        v[i][j] = 0
-            # print(temp)
-            
-            # print(itv)
-    # print('-----------------------------------')
-    # with open('count.txt', 'a') as f:
-    #     f.write(f'{cnt}\n')
-    return itv, u, v
+def get_dnn_interval(x, a, b, list_layers):
+    itv = np.asarray([-np.inf, np.inf])
+    itv = cuda.to_device(itv)
+    a = cuda.to_device(a)
+    b = cuda.to_device(b)
+    x = cuda.to_device(x)
+    for name, param in list_layers:
+        if name == 'Linear Weight':
+            a, b, x = LinearWeight(a, b, x, param)
+        elif name == 'Linear Bias':
+            a, b, x = LinearBias(a, b, x, param)
+        elif name == 'ReLU':
+            a, b, x, itv = Relu(a, b, x, itv)
+    itv = itv.copy_to_host()
+    a = a.copy_to_host()
+    b = b.copy_to_host()
+    return itv, a, b
 
 def get_alpha_percent_greatest(X, alpha):
     return np.argsort(X)[-int(alpha*len(X))]
@@ -119,10 +88,9 @@ def AE_AD(Xs_hat, Xt_hat, X_tilde, alpha):
 
 def get_ad_interval(X, X_hat, X_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha):
     itv = [-np.inf, np.inf]
-    sub_itv, u, v = get_dnn_interval(X, a, b, wdgrl.generator)
-    # print(u[-1])
+    sub_itv, u, v = get_dnn_interval(X, a, b, wdgrl)
     itv = intersect(itv, sub_itv)
-    sub_itv, p, q= get_dnn_interval(X_hat, u, v, ae)
+    sub_itv, p, q = get_dnn_interval(X_hat, u, v, ae)
     itv = intersect(itv, sub_itv)
     s = np.zeros((X_hat.shape[0], X_hat.shape[1]))
     for i in range(X_hat.shape[0]):
@@ -150,28 +118,21 @@ def get_ad_interval(X, X_hat, X_tilde, reconstruction_loss, a, b, wdgrl, ae, alp
 
 def compute_yz(zk, a, b):
     Xz = a + b*zk
-
     return Xz
 
-def max_sum(X):
-    return 0
-
-def parametric_si(Xz, a, b, zk, wdgrl, ae, alpha, ns, nt):
-    Xz = Xz.reshape(ns+nt, -1)
-    a = a.reshape(ns+nt, -1)
-    b = b.reshape(ns+nt, -1)
+def parametric_si(Xz, a, b, zk, wdgrl, ae, np_wdgrl, np_ae, alpha, ns, nt):
     Xz_hat = wdgrl.extract_feature(torch.DoubleTensor(Xz).to(wdgrl.device)).cpu().numpy()
     Xz_tilde = ae.forward(torch.DoubleTensor(Xz_hat).to(ae.device)).cpu().numpy()
     reconstruction_loss = ae.reconstruction_loss(torch.DoubleTensor(Xz_hat).to(ae.device))
     reconstruction_loss = [i.item() for i in reconstruction_loss]
     Oz = AE_AD(Xz_hat[:ns], Xz_hat[ns:], Xz_tilde, alpha)
-    itv = get_ad_interval(Xz, Xz_hat, Xz_tilde, reconstruction_loss, a, b, wdgrl, ae, alpha)
+    itv = get_ad_interval(Xz, Xz_hat, Xz_tilde, reconstruction_loss, a, b, np_wdgrl, np_ae, alpha)
     if zk < itv[0] or zk > itv[1]:
         print('error', zk, itv)
     return itv[1] - min(zk, itv[1]), Oz
 
 
-def run_parametric_si(a, b, threshold, wdgrl, ae, alpha, ns, nt):
+def run_parametric_si(a, b, threshold, wdgrl, ae, np_wdgrl, np_ae, alpha, ns, nt):
     zk = threshold[0]
 
     list_zk = [zk]
@@ -179,7 +140,7 @@ def run_parametric_si(a, b, threshold, wdgrl, ae, alpha, ns, nt):
 
     while zk < threshold[1]:
         Xz = compute_yz(zk, a, b)
-        skz, Oz = parametric_si(Xz, a, b, zk, wdgrl, ae, alpha, ns, nt)
+        skz, Oz = parametric_si(Xz, a, b, zk, wdgrl, ae, np_wdgrl, np_ae, alpha, ns, nt)
         zk = zk + skz + 1e-3 
         # zk = min(zk, threshold)
         list_zk.append(zk)
@@ -219,3 +180,5 @@ def truncated_cdf(etajTy, mu, sigma, left, right):
         return float(numerator/denominator)
     else:
         return None
+    
+

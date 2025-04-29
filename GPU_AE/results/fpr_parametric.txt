@@ -1,0 +1,3 @@
+0.05
+KstestResult(statistic=0.09136995732240782, pvalue=0.25322796272756165, statistic_location=0.4169633760109255, statistic_sign=1)
+17529.0036611557

@@ -1,2 +1,0 @@
-0.0
-KstestResult(statistic=0.6141776885313948, pvalue=0.7716446229372105, statistic_location=0.6141776885313948, statistic_sign=-1)
